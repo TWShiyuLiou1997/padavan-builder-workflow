@@ -1,4 +1,4 @@
-name: Build firmware (Debug & Zip & Log)
+name: Build firmware (Debug & Zip & Log & Smart-Pack)
 
 # 加入權限設定以解決 Error 403
 permissions:
@@ -24,7 +24,7 @@ on:
         description: '自定義配置 JSON (Wi-Fi/密碼/IP)'
         required: true
         type: string
-        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+        default: '{"lanip":"192.168.1.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
   push:
     tags:
@@ -226,7 +226,7 @@ jobs:
            sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
         fi
 
-    # 8. 開始編譯 (加入 Log 記錄功能)
+    # 8. 開始編譯
     - name: Build firmware
       run: |
         echo "::group::Build Process"
@@ -236,87 +236,82 @@ jobs:
         ./clear_tree.sh > /dev/null 2>&1
         rm -rf tmp staging
         
-        # 關鍵修改：使用 set -o pipefail 確保指令錯誤能被捕捉
-        # 使用 tee 同時輸出到螢幕與檔案 (build.log)
+        # 使用 pipefail 確保錯誤被捕捉，並輸出 Log
         set -o pipefail
         ./build_firmware.sh 2>&1 | tee build.log
         
-        FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
-                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
-        
-        if [[ -z $FW_FILE_NAME ]]; then
-             echo "::error:: Firmware file not found in images directory!"
-             exit 1
-        fi
-        
-        echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
+        # 這裡不先抓檔名，等打包階段再一次抓
         echo "::endgroup::"
 
-    # 9. 準備打包 (ZIP, MD5, Configs, LOG)
+    # 9. 準備打包 (關鍵升級：智慧抓取所有產物)
     - name: Prepare Artifacts & Debug Configs
       run: |
         echo "::group::Artifact Packing"
         
-        # 建立打包資料夾
         mkdir -p output_pack
         
-        FW_PATH="padavan-ng/trunk/images/$FW_FILE_NAME"
         BUILD_CONFIG="padavan-ng/trunk/.config"
         KERNEL_CONFIG_ACTUAL="padavan-ng/trunk/linux-3.4.x/.config"
         BUILD_LOG="padavan-ng/trunk/build.log"
+        IMAGES_DIR="padavan-ng/trunk/images"
         
-        # 讀取 Vendor/Product 用於尋找備用 kernel config
+        # 1. 智慧抓取所有 Firmware 與 Uboot 檔案 (trx, bin)
+        echo "1. Scanning for generated images..."
+        if [ -d "$IMAGES_DIR" ]; then
+             # 找出所有 .trx 和 .bin 複製進去
+             find "$IMAGES_DIR" -type f \( -name "*.trx" -o -name "*.bin" \) -exec cp -v {} output_pack/ \;
+        else
+             echo "::error:: Images directory not found!"
+             exit 1
+        fi
+
+        # 檢測是否有 Uboot
+        if ls output_pack/*uboot* 1> /dev/null 2>&1; then
+             echo "::notice:: U-Boot image detected and included in zip."
+        else
+             echo "::notice:: No U-Boot image found (Standard for Firmware-only builds)."
+        fi
+        
+        # 抓取主要韌體名稱 (用於 MD5 與 Release Tag)
+        # 邏輯：優先找 .trx，如果沒有找 .bin，並取最新的一個
+        FW_FILE_NAME="$(cd output_pack && ls -t *.trx *.bin 2>/dev/null | head -1)"
+        if [ -z "$FW_FILE_NAME" ]; then
+             echo "::error:: No firmware file found in output_pack!"
+             exit 1
+        fi
+        echo "Main Firmware File: $FW_FILE_NAME"
+
+        # 2. 備份 Config
+        echo "2. Copying Configs..."
+        [ -f "$BUILD_CONFIG" ] && cp "$BUILD_CONFIG" "output_pack/build.config"
+        
         source padavan-ng/trunk/.config
         KERNEL_CONFIG_SOURCE="padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/kernel-3.4.x.config"
         
-        echo "1. Copying Firmware..."
-        cp "$FW_PATH" "output_pack/$FW_FILE_NAME"
-        
-        echo "2. Copying Build Config (The main firmware config)..."
-        if [ -f "$BUILD_CONFIG" ]; then
-            cp "$BUILD_CONFIG" "output_pack/build.config"
-            echo "   -> build.config captured."
-        else
-            echo "::error:: build.config missing!"
-        fi
-
-        echo "3. Copying Kernel Config..."
         if [ -f "$KERNEL_CONFIG_ACTUAL" ]; then
-            echo "   -> Found actual compiled kernel config (linux-3.4.x/.config)."
             cp "$KERNEL_CONFIG_ACTUAL" "output_pack/kernel_actual.config"
         elif [ -f "$KERNEL_CONFIG_SOURCE" ]; then
-            echo "   -> Actual config missing (cleaned?), falling back to source ($KERNEL_CONFIG_SOURCE)."
             cp "$KERNEL_CONFIG_SOURCE" "output_pack/kernel_source.config"
-        else
-            echo "::warning:: No kernel config found!"
-            echo "Kernel config not found" > output_pack/kernel_config_missing.txt
         fi
 
-        echo "4. Copying Build Log..."
-        if [ -f "$BUILD_LOG" ]; then
-            echo "   -> Found build log."
-            cp "$BUILD_LOG" "output_pack/build.log"
-        else
-             echo "::warning:: Build log not found."
-             echo "Build log not found" > output_pack/log_missing.txt
-        fi
+        # 3. 備份 Log
+        echo "3. Copying Log..."
+        [ -f "$BUILD_LOG" ] && cp "$BUILD_LOG" "output_pack/build.log"
 
-        echo "5. Generating MD5..."
+        # 4. 生成 MD5 (針對 Zip 內所有檔案生成清單)
+        echo "4. Generating MD5 for all files..."
         cd output_pack
-        md5sum "$FW_FILE_NAME" | tee md5sum.txt
+        md5sum * > md5sum.txt
         
-        echo "6. Zipping everything..."
+        # 5. 打包
+        echo "5. Zipping..."
         ZIP_NAME="padavan_pack_${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}.zip"
         zip -r "../$ZIP_NAME" .
         cd ..
         
-        echo "7. Debug - List Zip Content:"
-        unzip -l "$ZIP_NAME"
-        
-        # 設定 ENV 給後續步驟使用
+        # 設定 ENV
         echo "BUILD_TIMESTAMP=$(TZ='Asia/Taipei' date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
         echo "ZIP_FILE_PATH=$(pwd)/$ZIP_NAME" >> $GITHUB_ENV
-        echo "ZIP_FILE_NAME=$ZIP_NAME" >> $GITHUB_ENV
         echo "CONFIG_VENDOR=$CONFIG_VENDOR" >> $GITHUB_ENV
         echo "CONFIG_FIRMWARE_PRODUCT_ID=$CONFIG_FIRMWARE_PRODUCT_ID" >> $GITHUB_ENV
         
@@ -331,11 +326,13 @@ jobs:
     - name: Check firmware size
       run: |
         echo "::group::Size Check"
+        # 這裡只檢查主韌體大小，避免 Uboot 誤判
+        FW_FILE_NAME="$(cd output_pack && ls -t *.trx *.bin 2>/dev/null | head -1)"
         partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
         
-        if [ -f "$partitions" ]; then
+        if [ -f "$partitions" ] && [ ! -z "$FW_FILE_NAME" ]; then
            max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
-           fw_size="$(stat -c %s "padavan-ng/trunk/images/$FW_FILE_NAME")"
+           fw_size="$(stat -c %s "output_pack/$FW_FILE_NAME")"
            
            if ((fw_size > max_fw_size)); then
              echo "::error:: Firmware too large! $fw_size > $max_fw_size"
@@ -361,16 +358,15 @@ jobs:
         tag: ${{ env.TAG_NAME }}
         name: Build ${{ inputs.target_select }} (${{ env.BUILD_TIMESTAMP }})
         body: |
-          **Padavan 編譯報告 (Debug + Zip + Log)**
+          **Padavan 自動編譯報告**
           * 機型: ${{ inputs.target_select }}
           * 時間: ${{ env.BUILD_TIME }} (Taipei Time)
-          * LAN IP: ${{ env.LANIP }}
+          * IP: ${{ env.LANIP }}
+          * **U-Boot 狀態**: ${{ env.UBOOT_DETECTED }} (查看 Zip 內容確認)
           * 內容物:
-            1. 韌體檔案 (`.trx`/`.bin`)
-            2. MD5 驗證檔 (`md5sum.txt`)
-            3. 韌體編譯設定 (`build.config`)
-            4. 核心編譯設定 (`kernel_actual.config`)
-            5. 編譯紀錄 (`build.log`)
+            - 所有生成的 `.trx` / `.bin` 檔案 (含 U-Boot 若有)
+            - 完整 MD5 清單
+            - Debug Configs & Logs
         artifacts: ${{ env.ZIP_FILE_PATH }}
         allowUpdates: true
         artifactErrorsFailBuild: true

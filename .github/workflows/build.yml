@@ -1,4 +1,8 @@
-name: Build firmware (Debug & Zip)
+name: Build firmware (Debug & Zip & Log)
+
+# 加入權限設定以解決 Error 403
+permissions:
+  contents: write
 
 on:
   workflow_dispatch:
@@ -20,7 +24,7 @@ on:
         description: '自定義配置 JSON (Wi-Fi/密碼/IP)'
         required: true
         type: string
-        default: '{"lanip":"192.168.1.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
   push:
     tags:
@@ -222,7 +226,7 @@ jobs:
            sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
         fi
 
-    # 8. 開始編譯
+    # 8. 開始編譯 (加入 Log 記錄功能)
     - name: Build firmware
       run: |
         echo "::group::Build Process"
@@ -232,7 +236,10 @@ jobs:
         ./clear_tree.sh > /dev/null 2>&1
         rm -rf tmp staging
         
-        ./build_firmware.sh
+        # 關鍵修改：使用 set -o pipefail 確保指令錯誤能被捕捉
+        # 使用 tee 同時輸出到螢幕與檔案 (build.log)
+        set -o pipefail
+        ./build_firmware.sh 2>&1 | tee build.log
         
         FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
                         -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
@@ -245,7 +252,7 @@ jobs:
         echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
         echo "::endgroup::"
 
-    # 9. 準備打包 (關鍵修改：ZIP, MD5, Configs)
+    # 9. 準備打包 (ZIP, MD5, Configs, LOG)
     - name: Prepare Artifacts & Debug Configs
       run: |
         echo "::group::Artifact Packing"
@@ -255,8 +262,8 @@ jobs:
         
         FW_PATH="padavan-ng/trunk/images/$FW_FILE_NAME"
         BUILD_CONFIG="padavan-ng/trunk/.config"
-        # 這是編譯核心時「實際使用」的 config，最能反映現況
         KERNEL_CONFIG_ACTUAL="padavan-ng/trunk/linux-3.4.x/.config"
+        BUILD_LOG="padavan-ng/trunk/build.log"
         
         # 讀取 Vendor/Product 用於尋找備用 kernel config
         source padavan-ng/trunk/.config
@@ -282,20 +289,28 @@ jobs:
             cp "$KERNEL_CONFIG_SOURCE" "output_pack/kernel_source.config"
         else
             echo "::warning:: No kernel config found!"
-            # 建立一個空檔案避免 User 疑惑
             echo "Kernel config not found" > output_pack/kernel_config_missing.txt
         fi
 
-        echo "4. Generating MD5..."
+        echo "4. Copying Build Log..."
+        if [ -f "$BUILD_LOG" ]; then
+            echo "   -> Found build log."
+            cp "$BUILD_LOG" "output_pack/build.log"
+        else
+             echo "::warning:: Build log not found."
+             echo "Build log not found" > output_pack/log_missing.txt
+        fi
+
+        echo "5. Generating MD5..."
         cd output_pack
         md5sum "$FW_FILE_NAME" | tee md5sum.txt
         
-        echo "5. Zipping everything..."
+        echo "6. Zipping everything..."
         ZIP_NAME="padavan_pack_${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}.zip"
         zip -r "../$ZIP_NAME" .
         cd ..
         
-        echo "6. Debug - List Zip Content:"
+        echo "7. Debug - List Zip Content:"
         unzip -l "$ZIP_NAME"
         
         # 設定 ENV 給後續步驟使用
@@ -346,7 +361,7 @@ jobs:
         tag: ${{ env.TAG_NAME }}
         name: Build ${{ inputs.target_select }} (${{ env.BUILD_TIMESTAMP }})
         body: |
-          **Padavan 編譯報告 (Debug + Zip)**
+          **Padavan 編譯報告 (Debug + Zip + Log)**
           * 機型: ${{ inputs.target_select }}
           * 時間: ${{ env.BUILD_TIME }} (Taipei Time)
           * LAN IP: ${{ env.LANIP }}
@@ -354,7 +369,8 @@ jobs:
             1. 韌體檔案 (`.trx`/`.bin`)
             2. MD5 驗證檔 (`md5sum.txt`)
             3. 韌體編譯設定 (`build.config`)
-            4. 核心編譯設定 (`kernel_actual.config` 或 `kernel_source.config`)
+            4. 核心編譯設定 (`kernel_actual.config`)
+            5. 編譯紀錄 (`build.log`)
         artifacts: ${{ env.ZIP_FILE_PATH }}
         allowUpdates: true
         artifactErrorsFailBuild: true

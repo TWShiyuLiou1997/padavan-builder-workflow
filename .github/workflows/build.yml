@@ -1,4 +1,4 @@
-name: Build firmware (Debug Enhanced)
+name: Build firmware (Debug & Zip)
 
 on:
   workflow_dispatch:
@@ -36,7 +36,7 @@ jobs:
     - name: Checkout Workflow
       uses: actions/checkout@v4
 
-    # 0. 環境初檢 (新增步驟)
+    # 0. 環境初檢
     - name: Debug - Initial Environment Check
       run: |
         echo "::group::System Info"
@@ -46,14 +46,14 @@ jobs:
         df -h
         echo "::endgroup::"
 
-    # 1. 安裝依賴 (強化 Log)
+    # 1. 安裝依賴 (加入 zip)
     - name: Install Dependencies & Fix Timezone
       run: |
         echo "::group::Apt Update & Install"
-        # 開啟詳細指令顯示
         set -x 
         apt-get update
         
+        # 加入 zip 以便打包
         DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata autoconf autoconf-archive automake autopoint bison build-essential \
         ca-certificates cmake cpio curl dos2unix doxygen fakeroot flex gawk gettext git gperf \
         help2man htop kmod libarchive-tools libblkid-dev libc-ares-dev libcurl4-openssl-dev \
@@ -62,17 +62,14 @@ jobs:
         libmpfr-dev libncurses5-dev libogg-dev libsqlite3-dev libssl-dev libsystemd-dev \
         libtool libtool-bin libudev-dev libunbound-dev libvorbis-dev libxml2-dev locales \
         mc nano pkg-config ppp-dev python3 python3-docutils sshpass texinfo unzip uuid \
-        uuid-dev vim wget xxd zlib1g-dev jq
+        uuid-dev vim wget xxd zlib1g-dev jq zip
         set +x
         echo "::endgroup::"
 
         echo "::group::Timezone Configuration"
-        echo "Before Fix: $(date)"
         ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
         dpkg-reconfigure -f noninteractive tzdata
-        echo "After Fix: $(date)"
         
-        # 驗證時區是否正確 (+0800)
         CURRENT_TZ=$(date +%z)
         if [[ "$CURRENT_TZ" != "+0800" ]]; then
             echo "::error::Timezone fix failed! Current TZ: $CURRENT_TZ"
@@ -83,51 +80,37 @@ jobs:
         echo "::notice::Build Time is $(date)"
         echo "::endgroup::"
 
-    # 2. 設定變數 (強化變數檢查)
+    # 2. 設定變數
     - name: Get variables
       run: |
         echo "::group::Variable Loading"
         if [ -f "variables" ]; then
-            echo "Found 'variables' file. Content:"
-            cat variables
             sed -i 's|\r$||g' variables
             . variables
         else
             echo "::warning:: 'variables' file not found."
         fi
         
-        # 強制設定變數
-        echo "Setting PADAVAN_REPO to: https://github.com/TWShiyuLiou1997/padavan-ng"
         echo "PADAVAN_REPO=https://github.com/TWShiyuLiou1997/padavan-ng" >> $GITHUB_ENV
         echo "PADAVAN_BRANCH=master" >> $GITHUB_ENV
         echo "PADAVAN_COMMIT=HEAD" >> $GITHUB_ENV
         
         if [ -z "$PADAVAN_THEMES_REPO" ]; then
-             echo "Using default Themes Repo"
              echo "PADAVAN_THEMES_REPO=https://gitlab.com/hadzhioglu/padavan-themes.git" >> $GITHUB_ENV
              echo "PADAVAN_THEMES_BRANCH=main" >> $GITHUB_ENV
         fi
         
-        echo "::endgroup::"
-        
-        echo "::group::Final Environment Variables"
-        # 將 variables 檔案中的其他變數也匯入 ENV 並印出檢查
         for v in "${!PADAVAN_@}" "${!CONFIG_@}"; do
-          echo "Exporting: $v=${!v}"
           echo "$v=${!v}" >> $GITHUB_ENV
         done
         echo "::endgroup::"
 
-    # 3. 下載源碼 (強化 Clone 檢查)
+    # 3. 下載源碼
     - name: Download sources and toolchain
       run: |
         echo "::group::Git Clone"
-        echo "Target Repo: $PADAVAN_REPO"
-        echo "Target Branch: $PADAVAN_BRANCH"
-        
         git config --global --add safe.directory '*'
         
-        # 使用 set -x 監控 git 指令
         set -x
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
         
@@ -137,39 +120,22 @@ jobs:
         fi
         
         if [ "$PADAVAN_COMMIT" != "HEAD" ] && [ ! -z "$PADAVAN_COMMIT" ]; then
-             echo "Checking out specific commit: $PADAVAN_COMMIT"
              git -C padavan-ng checkout "$PADAVAN_COMMIT"
         fi
         set +x
-        echo "::endgroup::"
-
-        echo "::group::Toolchain Setup"
-        echo "Downloading Toolchain from: $PADAVAN_TOOLCHAIN_URL"
         wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
-        
-        # 檢查 Toolchain 是否解壓成功
-        if [ ! -d "padavan-ng/toolchain" ]; then
-             echo "::error:: Toolchain directory missing!"
-             ls -la padavan-ng/
-             exit 1
-        fi
-        echo "Toolchain check passed."
         echo "::endgroup::"
 
-    # 4. 生成 Config (強化邏輯追蹤)
+    # 4. 生成 Config
     - name: Generate build.config & Apply Nano
       run: |
         TNAME="${{ inputs.target_select }}"
         [ -z "$TNAME" ] && TNAME="TL_C2-V1"
-        echo "::group::Template Search"
-        echo "Target Model: $TNAME"
+        echo "::group::Template Search & Config Gen"
         
         TEMPLATE_DIR="padavan-ng/trunk/configs/templates"
         PATTERN_A=$(echo "$TNAME" | sed 's/-/_/g')
         PATTERN_B=$(echo "$TNAME")
-        
-        echo "Searching in: $TEMPLATE_DIR"
-        echo "Looking for: ${PATTERN_A}.config OR ${PATTERN_B}.config"
         
         TARGET_FILE=$(find "$TEMPLATE_DIR" -maxdepth 2 \( -iname "${PATTERN_A}.config" -o -iname "${PATTERN_B}.config" \) | head -n 1)
         
@@ -185,57 +151,33 @@ jobs:
         
         echo "Found Template: $TARGET_FILE"
         cp -f "$TARGET_FILE" build.config
-        echo "build.config created."
         echo "::endgroup::"
         
         if [ "${{ inputs.nanoversion }}" == "true" ]; then
-             echo "::group::Nano Optimization Details"
+             echo "::group::Nano Optimization"
              echo "Applying Nano optimization..."
-             
-             # 檔案系統瘦身
              for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
-               # 檢查是否原本是 y
-               if grep -q "CONFIG_FIRMWARE_ENABLE_${fs}=y" build.config; then
-                   echo "  - Disabling FileSystem: ${fs}"
-                   sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" build.config
-               fi
+               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" build.config
              done
-             
-             # 模組瘦身
              modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
-             
              for mod in "${modules[@]}"; do
-               if grep -q "CONFIG_FIRMWARE_INCLUDE_${mod}=y" build.config; then
-                   echo "  - Removing Module: ${mod}"
-                   sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" build.config
-               fi
+               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" build.config
              done
              echo "::endgroup::"
         fi
         
-        echo "::group::Module Retention (Keep Modules)"
         keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
         for kmod in "${keep_modules[@]}"; do
-             echo "  - Enforcing: $kmod"
              sed -i "/CONFIG_FIRMWARE_INCLUDE_${kmod}/d" build.config
              echo "CONFIG_FIRMWARE_INCLUDE_${kmod}=y" >> build.config
         done
-        echo "::endgroup::"
-        
-        echo "::group::Final Config Preview (Head)"
-        head -n 20 build.config
-        echo "::endgroup::"
 
-    # 5. 應用自定義設定 (強化腳本執行檢查)
+    # 5. 應用自定義設定
     - name: Apply Custom Settings (JSON)
       run: |
-        echo "::group::JSON Parsing"
-        # 顯示原始 JSON (遮蔽敏感資訊是一個好習慣，但這裡為了除錯先明碼顯示，請自行評估)
-        echo "Raw Input: ${{ inputs.customization }}"
-        
+        echo "::group::JSON Parsing & Script Exec"
         echo '${{ inputs.customization }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
            export "${k^^}=$v"
-           echo "  Parsed: ${k^^} = $v"
         done
         
         LANIP=$(echo '${{ inputs.customization }}' | jq -r .lanip)
@@ -247,34 +189,13 @@ jobs:
         WIFI5GPSK=$(echo '${{ inputs.customization }}' | jq -r .wifi5gpsk)
         
         export LANIP SIGNACCOUNT SIGNPASSWORD WIFI2GSSID WIFI2GPSK WIFI5GSSID WIFI5GPSK
-        echo "::endgroup::"
         
-        echo "::group::Custom Scripts Execution"
-        SCRIPT_DIR="padavan-ng/trunk/custom/scripts"
-        
-        if [ -d "$SCRIPT_DIR" ]; then
+        if [ -d "padavan-ng/trunk/custom/scripts" ]; then
             cd padavan-ng
             chmod +x trunk/custom/scripts/*.sh
-            
-            echo "Executing scripts in $SCRIPT_DIR..."
-            ls -la trunk/custom/scripts/
-            
-            if [ ! -z "$LANIP" ]; then
-                echo "Running setip.sh with IP: $LANIP"
-                bash trunk/custom/scripts/setip.sh "$LANIP" trunk/user/shared/defaults.h trunk/user/www/dict/CN.dict || echo "::error:: setip.sh failed"
-            fi
-            
-            if [ ! -z "$SIGNACCOUNT" ]; then
-                echo "Running setaccount.sh for user: $SIGNACCOUNT"
-                bash trunk/custom/scripts/setaccount.sh "$SIGNACCOUNT" "$SIGNPASSWORD" trunk/user/shared/defaults.h || echo "::error:: setaccount.sh failed"
-            fi
-            
-            if [ ! -z "$WIFI2GSSID" ]; then
-                echo "Running setwifi.sh for SSID: $WIFI2GSSID"
-                bash trunk/custom/scripts/setwifi.sh "$WIFI2GSSID" "$WIFI2GPSK" "$WIFI5GSSID" "$WIFI5GPSK" trunk/user/shared/defaults.h || echo "::error:: setwifi.sh failed"
-            fi
-        else
-            echo "::warning:: Script directory not found: $SCRIPT_DIR"
+            [ ! -z "$LANIP" ] && bash trunk/custom/scripts/setip.sh "$LANIP" trunk/user/shared/defaults.h trunk/user/www/dict/CN.dict || true
+            [ ! -z "$SIGNACCOUNT" ] && bash trunk/custom/scripts/setaccount.sh "$SIGNACCOUNT" "$SIGNPASSWORD" trunk/user/shared/defaults.h || true
+            [ ! -z "$WIFI2GSSID" ] && bash trunk/custom/scripts/setwifi.sh "$WIFI2GSSID" "$WIFI2GPSK" "$WIFI5GSSID" "$WIFI5GPSK" trunk/user/shared/defaults.h || true
         fi
         echo "::endgroup::"
 
@@ -283,82 +204,35 @@ jobs:
       run: |
         echo "::group::Themes Installation"
         if [ -f "variables" ]; then . variables; fi
-        
         if [[ -n "${PADAVAN_THEMES[*]}" ]]; then
-          echo "Cloning Themes from: $PADAVAN_THEMES_REPO"
           git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
-          
-          if [ -d "themes/common-theme" ]; then
-            cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
-            echo "Common theme installed."
-          else
-            echo "::error:: Common theme not found in cloned repo!"
-            ls -R themes
-          fi
-
+          cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
           for theme in "${PADAVAN_THEMES[@]}"; do
-            echo "Installing $theme theme..."
-            if [ -d "themes/$theme-theme" ]; then
-                cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
-            else
-                echo "::warning:: Theme '$theme' not found."
-            fi
+            [ -d "themes/$theme-theme" ] && cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
           done
-        else
-            echo "No themes defined in variables."
         fi
         echo "::endgroup::"
 
     # 7. 修正 mkimage
-    - name: Fix mkimage (Compatibility)
+    - name: Fix mkimage
       run: |
         MKIMAGE_FILE="padavan-ng/trunk/tools/mkimage/mkimage.c"
         if [ -f "$MKIMAGE_FILE" ]; then
-           echo "Patching mkimage.c..."
            sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' "$MKIMAGE_FILE"
            sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
-           # 簡單驗證 patch 是否成功
-           if grep -q "%hhd" "$MKIMAGE_FILE"; then
-               echo "Patch applied successfully."
-           else
-               echo "::warning:: Patch might have failed."
-           fi
-        else
-           echo "::warning:: mkimage.c not found at $MKIMAGE_FILE"
         fi
 
-    # 8. 開始編譯 (關鍵除錯：磁碟與檔案)
+    # 8. 開始編譯
     - name: Build firmware
       run: |
-        echo "::group::Pre-Build Environment"
-        # 檢查磁碟空間，編譯非常吃空間
-        df -h
-        echo "::endgroup::"
-
-        echo "Copying config..."
+        echo "::group::Build Process"
         cp build.config padavan-ng/trunk/.config
         cd padavan-ng/trunk
         
-        echo "Cleaning tree..."
         ./clear_tree.sh > /dev/null 2>&1
         rm -rf tmp staging
         
-        echo "::group::Running Build Script"
-        # 使用 set -x 可能會產生海量 log，所以這裡我們只記錄重要輸出
-        # 或者可以使用 `script` 命令來記錄所有輸出到檔案
         ./build_firmware.sh
-        EXIT_CODE=$?
-        echo "Build script finished with exit code: $EXIT_CODE"
-        echo "::endgroup::"
-
-        if [ $EXIT_CODE -ne 0 ]; then
-            echo "::error:: Build script failed!"
-            exit 1
-        fi
-
-        echo "::group::Finding Firmware File"
-        # 列出 images 目錄下所有內容，方便除錯
-        ls -la images/
         
         FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
                         -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
@@ -368,65 +242,92 @@ jobs:
              exit 1
         fi
         
-        echo "Found Firmware: $FW_FILE_NAME"
         echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
         echo "::endgroup::"
 
-    # 9. 準備與上傳 Artifacts
-    - name: Prepare artifacts
+    # 9. 準備打包 (關鍵修改：ZIP, MD5, Configs)
+    - name: Prepare Artifacts & Debug Configs
       run: |
-        echo "::group::Artifact Preparation"
-        echo "Copying $FW_FILE_NAME to workspace root..."
-        cp "padavan-ng/trunk/images/$FW_FILE_NAME" .
+        echo "::group::Artifact Packing"
         
-        if [ ! -f "$FW_FILE_NAME" ]; then
-             echo "::error:: Failed to copy firmware file."
-             exit 1
-        fi
+        # 建立打包資料夾
+        mkdir -p output_pack
         
-        echo "BUILD_TIMESTAMP=$(TZ='Asia/Taipei' date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
-        echo "FINAL_FILE_PATH=$(pwd)/$FW_FILE_NAME" >> $GITHUB_ENV
+        FW_PATH="padavan-ng/trunk/images/$FW_FILE_NAME"
+        BUILD_CONFIG="padavan-ng/trunk/.config"
+        # 這是編譯核心時「實際使用」的 config，最能反映現況
+        KERNEL_CONFIG_ACTUAL="padavan-ng/trunk/linux-3.4.x/.config"
         
-        # 讀取 Config
+        # 讀取 Vendor/Product 用於尋找備用 kernel config
         source padavan-ng/trunk/.config
-        echo "Read Config Vendor: $CONFIG_VENDOR"
-        echo "Read Product ID: $CONFIG_FIRMWARE_PRODUCT_ID"
+        KERNEL_CONFIG_SOURCE="padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/kernel-3.4.x.config"
         
+        echo "1. Copying Firmware..."
+        cp "$FW_PATH" "output_pack/$FW_FILE_NAME"
+        
+        echo "2. Copying Build Config (The main firmware config)..."
+        if [ -f "$BUILD_CONFIG" ]; then
+            cp "$BUILD_CONFIG" "output_pack/build.config"
+            echo "   -> build.config captured."
+        else
+            echo "::error:: build.config missing!"
+        fi
+
+        echo "3. Copying Kernel Config..."
+        if [ -f "$KERNEL_CONFIG_ACTUAL" ]; then
+            echo "   -> Found actual compiled kernel config (linux-3.4.x/.config)."
+            cp "$KERNEL_CONFIG_ACTUAL" "output_pack/kernel_actual.config"
+        elif [ -f "$KERNEL_CONFIG_SOURCE" ]; then
+            echo "   -> Actual config missing (cleaned?), falling back to source ($KERNEL_CONFIG_SOURCE)."
+            cp "$KERNEL_CONFIG_SOURCE" "output_pack/kernel_source.config"
+        else
+            echo "::warning:: No kernel config found!"
+            # 建立一個空檔案避免 User 疑惑
+            echo "Kernel config not found" > output_pack/kernel_config_missing.txt
+        fi
+
+        echo "4. Generating MD5..."
+        cd output_pack
+        md5sum "$FW_FILE_NAME" | tee md5sum.txt
+        
+        echo "5. Zipping everything..."
+        ZIP_NAME="padavan_pack_${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}.zip"
+        zip -r "../$ZIP_NAME" .
+        cd ..
+        
+        echo "6. Debug - List Zip Content:"
+        unzip -l "$ZIP_NAME"
+        
+        # 設定 ENV 給後續步驟使用
+        echo "BUILD_TIMESTAMP=$(TZ='Asia/Taipei' date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
+        echo "ZIP_FILE_PATH=$(pwd)/$ZIP_NAME" >> $GITHUB_ENV
+        echo "ZIP_FILE_NAME=$ZIP_NAME" >> $GITHUB_ENV
         echo "CONFIG_VENDOR=$CONFIG_VENDOR" >> $GITHUB_ENV
         echo "CONFIG_FIRMWARE_PRODUCT_ID=$CONFIG_FIRMWARE_PRODUCT_ID" >> $GITHUB_ENV
+        
         echo "::endgroup::"
 
-    - name: Upload artifacts
+    - name: Upload artifacts (ZIP)
       uses: actions/upload-artifact@v4
       with:
-        name: padavan-ng_${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}_${{ env.BUILD_TIMESTAMP }}
-        path: |
-          ${{ env.FW_FILE_NAME }}
-          build.config
+        name: padavan_${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}_${{ env.BUILD_TIMESTAMP }}
+        path: ${{ env.ZIP_FILE_PATH }}
 
     - name: Check firmware size
       run: |
         echo "::group::Size Check"
         partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
         
-        if [ ! -f "$partitions" ]; then
-            echo "::warning:: Partition config not found at $partitions. Skipping size check."
-            exit 0
-        fi
-        
-        max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
-        fw_size="$(stat -c %s "$FW_FILE_NAME")"
-        
-        echo "Max Size: $max_fw_size"
-        echo "Actual Size: $fw_size"
-
-        if ((fw_size > max_fw_size)); then
-          fw_size_fmtd="$(numfmt --grouping "$fw_size") bytes"
-          max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") bytes"
-          echo "::error:: Firmware size ($fw_size_fmtd) exceeds max size ($max_fw_size_fmtd)"
-          exit 1
-        else
-          echo "Size check passed."
+        if [ -f "$partitions" ]; then
+           max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
+           fw_size="$(stat -c %s "padavan-ng/trunk/images/$FW_FILE_NAME")"
+           
+           if ((fw_size > max_fw_size)); then
+             echo "::error:: Firmware too large! $fw_size > $max_fw_size"
+             exit 1
+           else
+             echo "Size check passed: $fw_size / $max_fw_size"
+           fi
         fi
         echo "::endgroup::"
 
@@ -435,7 +336,6 @@ jobs:
       if: github.event_name == 'workflow_dispatch'
       run: |
         echo "TAG_NAME=build-${{ inputs.target_select }}-${{ env.BUILD_TIMESTAMP }}" >> $GITHUB_ENV
-        echo "Tag Name set to: build-${{ inputs.target_select }}-${{ env.BUILD_TIMESTAMP }}"
 
     - name: Publish Release
       if: github.event_name == 'workflow_dispatch'
@@ -446,13 +346,15 @@ jobs:
         tag: ${{ env.TAG_NAME }}
         name: Build ${{ inputs.target_select }} (${{ env.BUILD_TIMESTAMP }})
         body: |
-          **Padavan 編譯報告 (Debug Mode)**
+          **Padavan 編譯報告 (Debug + Zip)**
           * 機型: ${{ inputs.target_select }}
           * 時間: ${{ env.BUILD_TIME }} (Taipei Time)
           * LAN IP: ${{ env.LANIP }}
-          * 預設帳號: ${{ env.SIGNACCOUNT }}
-          * 來源 Repo: ${{ env.PADAVAN_REPO }}
-          * Commit: ${{ env.PADAVAN_COMMIT }}
-        artifacts: ${{ env.FINAL_FILE_PATH }}
+          * 內容物:
+            1. 韌體檔案 (`.trx`/`.bin`)
+            2. MD5 驗證檔 (`md5sum.txt`)
+            3. 韌體編譯設定 (`build.config`)
+            4. 核心編譯設定 (`kernel_actual.config` 或 `kernel_source.config`)
+        artifacts: ${{ env.ZIP_FILE_PATH }}
         allowUpdates: true
         artifactErrorsFailBuild: true

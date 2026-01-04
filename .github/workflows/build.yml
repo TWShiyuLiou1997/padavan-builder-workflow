@@ -39,7 +39,7 @@ jobs:
     - name: Install Dependencies (Author Recommended for 3.4)
       run: |
         apt-get update
-        apt-get install -y autoconf autoconf-archive automake autopoint bison build-essential \
+        apt-get install -y tzdata autoconf autoconf-archive automake autopoint bison build-essential \
         ca-certificates cmake cpio curl dos2unix doxygen fakeroot flex gawk gettext git gperf \
         help2man htop kmod libarchive-tools libblkid-dev libc-ares-dev libcurl4-openssl-dev \
         libdevmapper-dev libev-dev libevent-dev libexif-dev libflac-dev libgmp3-dev \
@@ -49,8 +49,13 @@ jobs:
         mc nano pkg-config ppp-dev python3 python3-docutils sshpass texinfo unzip uuid \
         uuid-dev vim wget xxd zlib1g-dev jq
 
-        # 設定台灣時間 YYYYMMDD-HHMM (用於 Release Body)
-        echo "BUILD_TIME=$(TZ='Asia/Taipei' date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+        # 強制設定時區為台北
+        ln -fs /usr/share/zoneinfo/Asia/Taipei /etc/localtime
+        dpkg-reconfigure -f noninteractive tzdata
+        
+        # 設定變數
+        echo "BUILD_TIME=$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+        echo "::notice::Build Time is $(date)"
 
     # 2. 設定變數
     - name: Get variables
@@ -77,6 +82,8 @@ jobs:
     # 3. 下載源碼與工具鏈
     - name: Download sources and toolchain
       run: |
+        echo "Cloning from: $PADAVAN_REPO branch: $PADAVAN_BRANCH"
+        
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
         

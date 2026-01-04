@@ -2,6 +2,26 @@ name: Build firmware
 
 on:
   workflow_dispatch:
+    inputs:
+      target_select:
+        description: "選擇機型 (Target Model)"
+        required: true
+        default: 'TL_C2-V1'
+        type: choice
+        options:
+          - TL_C2-V1
+      
+      nanoversion:
+        description: "開啟極限瘦身 (Nano Optimization)"
+        type: boolean
+        default: false
+
+      customization:
+        description: '自定義配置 JSON (Wi-Fi/密碼/IP)'
+        required: true
+        type: string
+        default: '{"lanip":"192.168.1.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+
   push:
     tags:
       - '*'
@@ -11,45 +31,164 @@ jobs:
     runs-on: ubuntu-latest
     container: registry.gitlab.com/hadzhioglu/padavan-ng
     defaults: { run: { shell: bash } }
+    
     steps:
     - uses: actions/checkout@v4
 
+    # 1. 安裝依賴 (Kernel 3.4 專用)
+    - name: Install Dependencies (Author Recommended for 3.4)
+      run: |
+        apt-get update
+        apt-get install -y autoconf autoconf-archive automake autopoint bison build-essential \
+        ca-certificates cmake cpio curl dos2unix doxygen fakeroot flex gawk gettext git gperf \
+        help2man htop kmod libarchive-tools libblkid-dev libc-ares-dev libcurl4-openssl-dev \
+        libdevmapper-dev libev-dev libevent-dev libexif-dev libflac-dev libgmp3-dev \
+        libid3tag0-dev libidn2-dev libjpeg-dev libkeyutils-dev libltdl-dev libmpc-dev \
+        libmpfr-dev libncurses5-dev libogg-dev libsqlite3-dev libssl-dev libsystemd-dev \
+        libtool libtool-bin libudev-dev libunbound-dev libvorbis-dev libxml2-dev locales \
+        mc nano pkg-config ppp-dev python3 python3-docutils sshpass texinfo unzip uuid \
+        uuid-dev vim wget xxd zlib1g-dev jq
+
+        # 設定台灣時間 YYYYMMDD-HHMM (用於 Release Body)
+        echo "BUILD_TIME=$(TZ='Asia/Taipei' date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+
+    # 2. 設定變數
     - name: Get variables
       run: |
-        sed -i 's|\r$||g' variables build.config
-        . <(cat variables build.config)
-        PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
+        if [ -f "variables" ]; then
+            sed -i 's|\r$||g' variables
+            . variables
+        fi
+        
+        # 強制設定為您的 Repo
+        echo "PADAVAN_REPO=https://github.com/TWShiyuLiou1997/padavan-ng" >> $GITHUB_ENV
+        echo "PADAVAN_BRANCH=master" >> $GITHUB_ENV
+        echo "PADAVAN_COMMIT=HEAD" >> $GITHUB_ENV
+        
+        if [ -z "$PADAVAN_THEMES_REPO" ]; then
+             echo "PADAVAN_THEMES_REPO=https://gitlab.com/hadzhioglu/padavan-themes.git" >> $GITHUB_ENV
+             echo "PADAVAN_THEMES_BRANCH=main" >> $GITHUB_ENV
+        fi
+        
         for v in "${!PADAVAN_@}" "${!CONFIG_@}"; do
           echo "$v=${!v}" >> $GITHUB_ENV
         done
 
+    # 3. 下載源碼與工具鏈
     - name: Download sources and toolchain
       run: |
         git config --global --add safe.directory '*'
         git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
-        git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        
+        if [ "$PADAVAN_COMMIT" != "HEAD" ] && [ ! -z "$PADAVAN_COMMIT" ]; then
+             git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        fi
+        
         wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
 
+    # 4. 生成 Config
+    - name: Generate build.config from Template & Apply Nano
+      run: |
+        TNAME="${{ inputs.target_select }}"
+        [ -z "$TNAME" ] && TNAME="TL_C2-V1"
+        echo "Target Model: $TNAME"
+        
+        TEMPLATE_DIR="padavan-ng/trunk/configs/templates"
+        PATTERN_A=$(echo "$TNAME" | sed 's/-/_/g')
+        PATTERN_B=$(echo "$TNAME")
+        
+        TARGET_FILE=$(find "$TEMPLATE_DIR" -maxdepth 2 \( -iname "${PATTERN_A}.config" -o -iname "${PATTERN_B}.config" \) | head -n 1)
+        
+        if [ -z "$TARGET_FILE" ]; then
+             echo "::warning:: Template not found, using fallback..."
+             TARGET_FILE="padavan-ng/trunk/configs/templates/tplink/tl_c2-v1.config"
+        fi
+        
+        if [ ! -f "$TARGET_FILE" ]; then
+             echo "::error:: Config file not found: $TARGET_FILE"
+             exit 1
+        fi
+        
+        echo "Found Template: $TARGET_FILE"
+        cp -f "$TARGET_FILE" build.config
+        
+        if [ "${{ inputs.nanoversion }}" == "true" ]; then
+             echo "Applying Nano optimization..."
+             for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
+               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" build.config
+             done
+             modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
+             for mod in "${modules[@]}"; do
+               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" build.config
+             done
+        fi
+        
+        keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
+        for kmod in "${keep_modules[@]}"; do
+             sed -i "/CONFIG_FIRMWARE_INCLUDE_${kmod}/d" build.config
+             echo "CONFIG_FIRMWARE_INCLUDE_${kmod}=y" >> build.config
+        done
+
+    # 5. 應用自定義設定
+    - name: Apply Custom Settings (JSON)
+      run: |
+        echo '${{ inputs.customization }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"' | while IFS='=' read -r k v; do
+           export "${k^^}=$v"
+        done
+        
+        LANIP=$(echo '${{ inputs.customization }}' | jq -r .lanip)
+        SIGNACCOUNT=$(echo '${{ inputs.customization }}' | jq -r .signaccount)
+        SIGNPASSWORD=$(echo '${{ inputs.customization }}' | jq -r .signpassword)
+        WIFI2GSSID=$(echo '${{ inputs.customization }}' | jq -r .wifi2gssid)
+        WIFI2GPSK=$(echo '${{ inputs.customization }}' | jq -r .wifi2gpsk)
+        WIFI5GSSID=$(echo '${{ inputs.customization }}' | jq -r .wifi5gssid)
+        WIFI5GPSK=$(echo '${{ inputs.customization }}' | jq -r .wifi5gpsk)
+        
+        export LANIP SIGNACCOUNT SIGNPASSWORD WIFI2GSSID WIFI2GPSK WIFI5GSSID WIFI5GPSK
+        
+        if [ -d "padavan-ng/trunk/custom/scripts" ]; then
+            cd padavan-ng
+            chmod +x trunk/custom/scripts/*.sh
+            
+            [ ! -z "$LANIP" ] && bash trunk/custom/scripts/setip.sh "$LANIP" trunk/user/shared/defaults.h trunk/user/www/dict/CN.dict || true
+            [ ! -z "$SIGNACCOUNT" ] && bash trunk/custom/scripts/setaccount.sh "$SIGNACCOUNT" "$SIGNPASSWORD" trunk/user/shared/defaults.h || true
+            [ ! -z "$WIFI2GSSID" ] && bash trunk/custom/scripts/setwifi.sh "$WIFI2GSSID" "$WIFI2GPSK" "$WIFI5GSSID" "$WIFI5GPSK" trunk/user/shared/defaults.h || true
+        fi
+
+    # 6. 安裝 Themes
     - name: Install themes
       run: |
-        if [[ -n $PADAVAN_THEMES ]]; then
+        if [ -f "variables" ]; then
+            . variables
+        fi
+        
+        if [[ -n "${PADAVAN_THEMES[*]}" ]]; then
           git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
           cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
 
-          for theme in $PADAVAN_THEMES; do
+          for theme in "${PADAVAN_THEMES[@]}"; do
             echo "Installing $theme theme"
             cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
           done
         fi
 
-    - name: Run custom pre-build script
-      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+    # 7. 修正 mkimage
+    - name: Fix mkimage (Compatibility)
+      run: |
+        if [ -f "padavan-ng/trunk/tools/mkimage/mkimage.c" ]; then
+           sed -i 's/"%d\.%d"/"%hhd.%hhd"/g' padavan-ng/trunk/tools/mkimage/mkimage.c
+           sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' padavan-ng/trunk/tools/mkimage/mkimage.c
+        fi
 
+    # 8. 開始編譯
     - name: Build firmware
       run: |
         cp build.config padavan-ng/trunk/.config
         cd padavan-ng/trunk
+        
         ./clear_tree.sh
+        rm -rf tmp staging
+        
         ./build_firmware.sh
 
         FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
@@ -57,19 +196,24 @@ jobs:
         [[ -n $FW_FILE_NAME ]] || { echo "Firmware file not found"; exit 1; }
         echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
 
-    - name: Run custom post-build script
-      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
-
+    # 9. 準備與上傳 Artifacts (這裡我幫你加了時區修正和變數抓取)
     - name: Prepare artifacts
       run: |
         cp "padavan-ng/trunk/images/$FW_FILE_NAME" .
-        echo "BUILD_TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
+        
+        # 修正：這裡也使用台北時間，確保 Release 名稱和內容時間一致
+        echo "BUILD_TIMESTAMP=$(TZ='Asia/Taipei' date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
+        echo "FINAL_FILE_PATH=$(pwd)/$FW_FILE_NAME" >> $GITHUB_ENV
+        
+        # 額外抓取 Config 變數，防止 variables 檔案沒設定導致 Artifact 名稱只有底線
+        source padavan-ng/trunk/.config
+        echo "CONFIG_VENDOR=$CONFIG_VENDOR" >> $GITHUB_ENV
+        echo "CONFIG_FIRMWARE_PRODUCT_ID=$CONFIG_FIRMWARE_PRODUCT_ID" >> $GITHUB_ENV
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: padavan-ng_${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}_${{ env.BUILD_TIMESTAMP }}
-        retention-days: 7
         path: |
           ${{ env.FW_FILE_NAME }}
           build.config
@@ -86,3 +230,26 @@ jobs:
           echo "Firmware size ($fw_size_fmtd) exceeds max size ($max_fw_size_fmtd) for your target device"
           exit 1
         fi
+
+    # 10. 發布 Release
+    - name: Set Release Tag
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        echo "TAG_NAME=build-${{ inputs.target_select }}-${{ env.BUILD_TIMESTAMP }}" >> $GITHUB_ENV
+
+    - name: Publish Release
+      if: github.event_name == 'workflow_dispatch'
+      uses: ncipollo/release-action@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit: ${{ github.sha }}
+        tag: ${{ env.TAG_NAME }}
+        name: Build ${{ inputs.target_select }} (${{ env.BUILD_TIMESTAMP }})
+        body: |
+          **Padavan 編譯報告**
+          * 機型: ${{ inputs.target_select }}
+          * 時間: ${{ env.BUILD_TIME }}
+          * LAN IP: ${{ env.LANIP }}
+        artifacts: ${{ env.FINAL_FILE_PATH }}
+        allowUpdates: true
+        artifactErrorsFailBuild: true

@@ -1,4 +1,4 @@
-name: Build firmware (Ultimate Debug & Smart-Pack Fixed)
+name: Build firmware (Ultimate Fix - Final)
 
 permissions:
   contents: write
@@ -39,12 +39,15 @@ jobs:
     - name: Checkout Workflow
       uses: actions/checkout@v4
 
-    # 0. 環境初檢
+    # 0. 環境初檢 & 路徑鎖定 (The Anchor)
     - name: Debug - Initial Environment Check
       run: |
         echo "::group::System Info"
         echo "User: $(whoami)"
-        echo "PWD: $(pwd)"
+        # 鎖定工作區根目錄，這是我們的「家」
+        WORKSPACE_ROOT=$(pwd)
+        echo "WORKSPACE_ROOT=$WORKSPACE_ROOT" >> $GITHUB_ENV
+        echo "Root Path: $WORKSPACE_ROOT"
         df -h
         echo "::endgroup::"
 
@@ -107,47 +110,58 @@ jobs:
         wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
         echo "::endgroup::"
 
-    # 4. 生成 Config
-    - name: Generate build.config & Apply Nano
+    # 4. 生成 Config (邏輯核心：直接生成最終檔案到根目錄)
+    - name: Prepare Template & Apply Nano
       run: |
         TNAME="${{ inputs.target_select }}"
         [ -z "$TNAME" ] && TNAME="TL_C2-V1"
-        echo "::group::Template Search & Config Gen"
+        echo "::group::Template Search"
         
-        TEMPLATE_DIR="padavan-ng/trunk/configs/templates"
+        # 使用絕對路徑
+        TEMPLATE_DIR="${{ env.WORKSPACE_ROOT }}/padavan-ng/trunk/configs/templates"
         PATTERN_A=$(echo "$TNAME" | sed 's/-/_/g')
         PATTERN_B=$(echo "$TNAME")
+        
         TARGET_FILE=$(find "$TEMPLATE_DIR" -maxdepth 2 \( -iname "${PATTERN_A}.config" -o -iname "${PATTERN_B}.config" \) | head -n 1)
         
         if [ -z "$TARGET_FILE" ]; then
              echo "::warning:: Template not found, using fallback..."
-             TARGET_FILE="padavan-ng/trunk/configs/templates/tplink/tl_c2-v1.config"
+             TARGET_FILE="${{ env.WORKSPACE_ROOT }}/padavan-ng/trunk/configs/templates/tplink/tl_c2-v1.config"
         fi
         
         if [ ! -f "$TARGET_FILE" ]; then
              echo "::error:: Config file not found: $TARGET_FILE"
              exit 1
         fi
-        cp -f "$TARGET_FILE" build.config
+        
+        # 關鍵動作 1：直接把模板複製到「家門口」 (根目錄下的 build.config)
+        # 這樣以後我們只認這個檔案，不再去管那深層的路徑了
+        FINAL_CONFIG="${{ env.WORKSPACE_ROOT }}/build.config"
+        cp -f "$TARGET_FILE" "$FINAL_CONFIG"
+        
+        echo "Template copied to: $FINAL_CONFIG"
         echo "::endgroup::"
         
+        # 關鍵動作 2：所有的修改直接針對這個「家門口」的檔案
         if [ "${{ inputs.nanoversion }}" == "true" ]; then
              echo "::group::Nano Optimization"
              for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
-               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" build.config
+               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" "$FINAL_CONFIG"
              done
              modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
              for mod in "${modules[@]}"; do
-               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" build.config
+               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" "$FINAL_CONFIG"
              done
              echo "::endgroup::"
         fi
         
+        echo "::group::Core Modules Enforcement"
         keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
         for kmod in "${keep_modules[@]}"; do
-             sed -i "/CONFIG_FIRMWARE_INCLUDE_${kmod}/d" build.config
-             echo "CONFIG_FIRMWARE_INCLUDE_${kmod}=y" >> build.config
+             sed -i "/CONFIG_FIRMWARE_INCLUDE_${kmod}/d" "$FINAL_CONFIG"
+             echo "CONFIG_FIRMWARE_INCLUDE_${kmod}=y" >> "$FINAL_CONFIG"
         done
+        echo "::endgroup::"
 
     # 5. 應用自定義設定 (JSON)
     - name: Apply Custom Settings
@@ -167,12 +181,16 @@ jobs:
         
         export LANIP SIGNACCOUNT SIGNPASSWORD WIFI2GSSID WIFI2GPSK WIFI5GSSID WIFI5GPSK
         
-        if [ -d "padavan-ng/trunk/custom/scripts" ]; then
-            cd padavan-ng
-            chmod +x trunk/custom/scripts/*.sh
-            [ ! -z "$LANIP" ] && bash trunk/custom/scripts/setip.sh "$LANIP" trunk/user/shared/defaults.h trunk/user/www/dict/CN.dict || true
-            [ ! -z "$SIGNACCOUNT" ] && bash trunk/custom/scripts/setaccount.sh "$SIGNACCOUNT" "$SIGNPASSWORD" trunk/user/shared/defaults.h || true
-            [ ! -z "$WIFI2GSSID" ] && bash trunk/custom/scripts/setwifi.sh "$WIFI2GSSID" "$WIFI2GPSK" "$WIFI5GSSID" "$WIFI5GPSK" trunk/user/shared/defaults.h || true
+        # 使用絕對路徑
+        SCRIPT_DIR="${{ env.WORKSPACE_ROOT }}/padavan-ng/trunk/custom/scripts"
+        DEFAULTS_H="${{ env.WORKSPACE_ROOT }}/padavan-ng/trunk/user/shared/defaults.h"
+        DICT_CN="${{ env.WORKSPACE_ROOT }}/padavan-ng/trunk/user/www/dict/CN.dict"
+        
+        if [ -d "$SCRIPT_DIR" ]; then
+            chmod +x $SCRIPT_DIR/*.sh
+            [ ! -z "$LANIP" ] && bash $SCRIPT_DIR/setip.sh "$LANIP" "$DEFAULTS_H" "$DICT_CN" || true
+            [ ! -z "$SIGNACCOUNT" ] && bash $SCRIPT_DIR/setaccount.sh "$SIGNACCOUNT" "$SIGNPASSWORD" "$DEFAULTS_H" || true
+            [ ! -z "$WIFI2GSSID" ] && bash $SCRIPT_DIR/setwifi.sh "$WIFI2GSSID" "$WIFI2GPSK" "$WIFI5GSSID" "$WIFI5GPSK" "$DEFAULTS_H" || true
         fi
         echo "::endgroup::"
 
@@ -199,69 +217,68 @@ jobs:
            sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
         fi
 
-    # 8. 開始編譯 (強化除錯 Log)
+    # 8. 開始編譯 (Late Copy - Simplified)
     - name: Build firmware
       run: |
-        echo "::group::Build Process"
-        cp build.config padavan-ng/trunk/.config
+        echo "::group::Pre-Build Setup"
+        
+        # 這裡不管之前路徑如何，我們直接引用根目錄下的那個檔案
+        FINAL_CONFIG="${{ env.WORKSPACE_ROOT }}/build.config"
+        
+        # 防呆檢查
+        if [ ! -f "$FINAL_CONFIG" ]; then
+            echo "::error:: Critical: build.config is missing at $FINAL_CONFIG"
+            exit 1
+        fi
+        
+        # 進入編譯目錄
         cd padavan-ng/trunk
         
+        # 清理
         ./clear_tree.sh > /dev/null 2>&1
         rm -rf tmp staging
         
-        echo "Starting build... Logs will be saved to build.log"
+        echo "Applying config from workspace root..."
+        # 複製到當前目錄 (.config)
+        cp -f "$FINAL_CONFIG" .config
+        
+        echo "Config applied. Starting compilation..."
+        echo "::endgroup::"
+        
         set -o pipefail
         ./build_firmware.sh 2>&1 | tee build.log
         echo "::endgroup::"
 
-    # 9. 智慧打包與產物偵測 (FIXED & ENHANCED)
+    # 9. 智慧打包 (絕對路徑版)
     - name: Smart-Pack & Debug Collection
       run: |
         echo "::group::Smart Packing"
         
-        # 1. 定義絕對路徑 (解決 Path Error 的關鍵!)
-        WORK_DIR=$(pwd)
-        PACK_DIR="$WORK_DIR/output_pack"
-        IMAGES_DIR="$WORK_DIR/padavan-ng/trunk/images"
+        PACK_DIR="${{ env.WORKSPACE_ROOT }}/output_pack"
+        SRC_TRUNK="${{ env.WORKSPACE_ROOT }}/padavan-ng/trunk"
+        IMAGES_DIR="${SRC_TRUNK}/images"
         
         mkdir -p "$PACK_DIR"
-        
-        # 初始化報告
         REPORT_FILE="$PACK_DIR/file_report.txt"
         touch "$REPORT_FILE"
         
-        echo "Packing Artifacts to: $PACK_DIR"
-        
-        # 2. 備份關鍵配置檔 (加入 defaults.h, CN.dict 以便除錯)
         echo "Collecting Debug Configurations..."
+        # 這裡直接抓根目錄的 build.config
+        [ -f "${{ env.WORKSPACE_ROOT }}/build.config" ] && cp "${{ env.WORKSPACE_ROOT }}/build.config" "$PACK_DIR/build.config"
+        [ -f "${SRC_TRUNK}/user/shared/defaults.h" ] && cp "${SRC_TRUNK}/user/shared/defaults.h" "$PACK_DIR/defaults.h.txt"
+        [ -f "${SRC_TRUNK}/user/www/dict/CN.dict" ] && cp "${SRC_TRUNK}/user/www/dict/CN.dict" "$PACK_DIR/CN.dict.txt"
+        [ -f "${SRC_TRUNK}/linux-3.4.x/.config" ] && cp "${SRC_TRUNK}/linux-3.4.x/.config" "$PACK_DIR/kernel_actual.config"
+        [ -f "${SRC_TRUNK}/build.log" ] && cp "${SRC_TRUNK}/build.log" "$PACK_DIR/build.log"
         
-        # 複製 .config (Build Config)
-        [ -f "padavan-ng/trunk/.config" ] && cp "padavan-ng/trunk/.config" "$PACK_DIR/build.config"
-        
-        # 複製 defaults.h (含 IP/WiFi/密碼設定)
-        [ -f "padavan-ng/trunk/user/shared/defaults.h" ] && cp "padavan-ng/trunk/user/shared/defaults.h" "$PACK_DIR/defaults.h.txt"
-        
-        # 複製 CN.dict (語言/字串檔)
-        [ -f "padavan-ng/trunk/user/www/dict/CN.dict" ] && cp "padavan-ng/trunk/user/www/dict/CN.dict" "$PACK_DIR/CN.dict.txt"
-        
-        # 複製 Kernel Config
-        [ -f "padavan-ng/trunk/linux-3.4.x/.config" ] && cp "padavan-ng/trunk/linux-3.4.x/.config" "$PACK_DIR/kernel.config"
-        
-        # 複製完整 Log
-        [ -f "padavan-ng/trunk/build.log" ] && cp "padavan-ng/trunk/build.log" "$PACK_DIR/build.log"
-        
-        # 3. 抓取韌體產物 (使用絕對路徑)
         if [ -d "$IMAGES_DIR" ]; then
-             echo "Scanning $IMAGES_DIR for images..."
-             # 尋找所有產物
-             find "$IMAGES_DIR" -maxdepth 1 -type f \( -name "*.trx" -o -name "*.bin" \) | while read -r file; do
-                 fname=$(basename "$file")
-                 fsize=$(stat -c %s "$file")
+             echo "Scanning images..."
+             find "$IMAGES_DIR" -maxdepth 1 -type f \( -name "*.trx" -o -name "*.bin" \) | while read -r filepath; do
+                 fname=$(basename "$filepath")
+                 fsize=$(stat -c %s "$filepath")
                  
-                 # 複製到 output_pack
-                 cp -v "$file" "$PACK_DIR/"
+                 echo "Found: $fname ($fsize bytes)"
+                 cp -v "$filepath" "$PACK_DIR/"
                  
-                 # 報告
                  if (( fsize < 500000 )); then
                      echo "- 📦 **U-Boot**: \`$fname\` ($(numfmt --to=iec $fsize))" >> "$REPORT_FILE"
                  else
@@ -269,36 +286,67 @@ jobs:
                  fi
              done
         else
-             echo "::warning:: Images directory not found. Build might have failed completely."
+             echo "::warning:: Images directory not found."
              echo "- ❌ **Error**: No images directory found." >> "$REPORT_FILE"
         fi
 
-        # 4. 生成 MD5
-        cd "$PACK_DIR"
-        md5sum * > md5sum.txt
-        
-        # 讀取報告供 Release 使用
-        FILE_REPORT_CONTENT=$(cat file_report.txt)
-        {
-          echo "FILE_REPORT<<EOF"
-          echo "$FILE_REPORT_CONTENT"
-          echo "EOF"
-        } >> $GITHUB_ENV
-        
-        # 找出最大的韌體檔案 (排除 uboot) 用於 Size Check
-        MAIN_FW=$(find . -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2)
-        # 轉換為絕對路徑
-        [ ! -z "$MAIN_FW" ] && echo "MAIN_FW_PATH=$PACK_DIR/${MAIN_FW#./}" >> $GITHUB_ENV
-        
-        cd "$WORK_DIR"
+        # === Size Check (Moved inside Smart-Pack to access variables) ===
+        echo "Running Size Check..."
+        # 1. 重新讀取 Config 以獲取 VENDOR 和 PRODUCT_ID
+        if [ -f "${{ env.WORKSPACE_ROOT }}/build.config" ]; then
+            source "${{ env.WORKSPACE_ROOT }}/build.config"
+            echo "Read Config: $CONFIG_VENDOR / $CONFIG_FIRMWARE_PRODUCT_ID"
+            # 匯出給後續步驟
+            echo "CONFIG_VENDOR=$CONFIG_VENDOR" >> $GITHUB_ENV
+            echo "CONFIG_FIRMWARE_PRODUCT_ID=$CONFIG_FIRMWARE_PRODUCT_ID" >> $GITHUB_ENV
+            
+            # 2. 尋找主要韌體
+            MAIN_FW=$(find "$PACK_DIR" -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2)
+            
+            PARTITIONS="${{ env.WORKSPACE_ROOT }}/padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config"
+            
+            if [ -f "$PARTITIONS" ] && [ ! -z "$MAIN_FW" ]; then
+               max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$PARTITIONS")"
+               fw_size="$(stat -c %s "$MAIN_FW")"
+               
+               echo "Checking file: $MAIN_FW"
+               echo "Current Size: $fw_size bytes"
+               echo "Max Size: $max_fw_size bytes"
+               
+               if ((fw_size > max_fw_size)); then
+                 echo "::error:: Firmware too large! $fw_size > $max_fw_size"
+                 exit 1
+               else
+                 echo "::notice:: Size check passed."
+               fi
+            else
+               echo "::warning:: Skip size check (file missing or partition config not found)."
+            fi
+        else
+            echo "::warning:: Could not read build.config for size check."
+        fi
+        # === End Size Check ===
 
-        # 5. 打包 Zip
-        ZIP_NAME="padavan_pack_${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}.zip"
-        zip -j -r "$ZIP_NAME" "$PACK_DIR"
+        cd "$PACK_DIR"
+        if [ "$(ls -A .)" ]; then
+            md5sum * > md5sum.txt
+            
+            FILE_REPORT_CONTENT=$(cat file_report.txt)
+            {
+              echo "FILE_REPORT<<EOF"
+              echo "$FILE_REPORT_CONTENT"
+              echo "EOF"
+            } >> $GITHUB_ENV
+            
+            ZIP_NAME="padavan_pack_${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}.zip"
+            zip -j -r "$ZIP_NAME" .
+            echo "ZIP_FILE_PATH=$PACK_DIR/$ZIP_NAME" >> $GITHUB_ENV
+        else
+            echo "::error:: output_pack is empty!"
+            exit 1
+        fi
         
-        echo "ZIP_FILE_PATH=$WORK_DIR/$ZIP_NAME" >> $GITHUB_ENV
         echo "BUILD_TIMESTAMP=$(TZ='Asia/Taipei' date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
-        echo "CONFIG_VENDOR=$CONFIG_VENDOR" >> $GITHUB_ENV
         echo "::endgroup::"
 
     - name: Upload artifacts (ZIP)
@@ -306,31 +354,6 @@ jobs:
       with:
         name: padavan_${{ env.CONFIG_VENDOR }}_${{ env.BUILD_TIMESTAMP }}
         path: ${{ env.ZIP_FILE_PATH }}
-
-    - name: Check firmware size
-      run: |
-        echo "::group::Size Check"
-        FW_FILE="${{ env.MAIN_FW_PATH }}"
-        partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
-        
-        if [ -f "$partitions" ] && [ -f "$FW_FILE" ]; then
-           max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
-           fw_size="$(stat -c %s "$FW_FILE")"
-           
-           echo "Checking file: $FW_FILE"
-           echo "Current Size: $fw_size bytes"
-           echo "Max Size: $max_fw_size bytes"
-           
-           if ((fw_size > max_fw_size)); then
-             echo "::error:: Firmware too large! $fw_size > $max_fw_size"
-             exit 1
-           else
-             echo "::notice:: Size check passed."
-           fi
-        else
-           echo "::warning:: Skip size check (file missing or partition config not found)."
-        fi
-        echo "::endgroup::"
 
     # 10. 發布 Release
     - name: Set Release Tag
@@ -347,7 +370,7 @@ jobs:
         tag: ${{ env.TAG_NAME }}
         name: ${{ inputs.target_select }} [${{ env.BUILD_TIMESTAMP }}]
         body: |
-          **Padavan 編譯報告 (Debug Pack)**
+          **Padavan 編譯報告 (Ultimate Fix)**
           * **機型**: ${{ inputs.target_select }}
           * **時間**: ${{ env.BUILD_TIME }} (Taipei Time)
           * **User**: ${{ env.SIGNACCOUNT }} / **Pass**: ${{ env.SIGNPASSWORD }}
@@ -356,11 +379,10 @@ jobs:
           ### 📦 產物偵測
           ${{ env.FILE_REPORT }}
           
-          ### 🛠 Debug 檔案 (已包含在 Zip)
-          * `defaults.h.txt` (檢查 IP/帳密 是否修改成功)
-          * `CN.dict.txt` (檢查語言檔)
+          ### 🛠 Debug 檔案
+          * `defaults.h.txt` (檢查修改結果)
           * `build.log` (編譯日誌)
-          * `.config` (編譯參數)
+          * `build.config` (最終編譯參數)
         artifacts: ${{ env.ZIP_FILE_PATH }}
         allowUpdates: true
         artifactErrorsFailBuild: true

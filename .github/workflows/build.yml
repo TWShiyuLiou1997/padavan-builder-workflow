@@ -1,4 +1,4 @@
-name: Build firmware (Ultimate Debug & Smart-Pack)
+name: Build firmware (Ultimate Debug & Smart-Pack Fixed)
 
 permissions:
   contents: write
@@ -45,11 +45,10 @@ jobs:
         echo "::group::System Info"
         echo "User: $(whoami)"
         echo "PWD: $(pwd)"
-        echo "Disk Space:"
         df -h
         echo "::endgroup::"
 
-    # 1. 安裝依賴 (含 Zip)
+    # 1. 安裝依賴
     - name: Install Dependencies & Fix Timezone
       run: |
         echo "::group::Apt Update & Install"
@@ -211,105 +210,93 @@ jobs:
         rm -rf tmp staging
         
         echo "Starting build... Logs will be saved to build.log"
-        # 這裡將 stderr 重導向 stdout，並用 tee 存檔，確保錯誤訊息不遺漏
         set -o pipefail
         ./build_firmware.sh 2>&1 | tee build.log
-        
         echo "::endgroup::"
 
-    # 9. 智慧打包與產物偵測 (The Core Logic)
-    - name: Smart-Pack & U-Boot Detection
+    # 9. 智慧打包與產物偵測 (FIXED & ENHANCED)
+    - name: Smart-Pack & Debug Collection
       run: |
         echo "::group::Smart Packing"
-        mkdir -p output_pack
-        IMAGES_DIR="padavan-ng/trunk/images"
         
-        echo "Scanning images directory: $IMAGES_DIR"
+        # 1. 定義絕對路徑 (解決 Path Error 的關鍵!)
+        WORK_DIR=$(pwd)
+        PACK_DIR="$WORK_DIR/output_pack"
+        IMAGES_DIR="$WORK_DIR/padavan-ng/trunk/images"
         
-        # 初始化報告檔案
-        REPORT_FILE="$(pwd)/output_pack/file_report.txt"
+        mkdir -p "$PACK_DIR"
+        
+        # 初始化報告
+        REPORT_FILE="$PACK_DIR/file_report.txt"
         touch "$REPORT_FILE"
-
-        # 1. 抓取所有產物 (.trx 和 .bin)，並進行分類標記
+        
+        echo "Packing Artifacts to: $PACK_DIR"
+        
+        # 2. 備份關鍵配置檔 (加入 defaults.h, CN.dict 以便除錯)
+        echo "Collecting Debug Configurations..."
+        
+        # 複製 .config (Build Config)
+        [ -f "padavan-ng/trunk/.config" ] && cp "padavan-ng/trunk/.config" "$PACK_DIR/build.config"
+        
+        # 複製 defaults.h (含 IP/WiFi/密碼設定)
+        [ -f "padavan-ng/trunk/user/shared/defaults.h" ] && cp "padavan-ng/trunk/user/shared/defaults.h" "$PACK_DIR/defaults.h.txt"
+        
+        # 複製 CN.dict (語言/字串檔)
+        [ -f "padavan-ng/trunk/user/www/dict/CN.dict" ] && cp "padavan-ng/trunk/user/www/dict/CN.dict" "$PACK_DIR/CN.dict.txt"
+        
+        # 複製 Kernel Config
+        [ -f "padavan-ng/trunk/linux-3.4.x/.config" ] && cp "padavan-ng/trunk/linux-3.4.x/.config" "$PACK_DIR/kernel.config"
+        
+        # 複製完整 Log
+        [ -f "padavan-ng/trunk/build.log" ] && cp "padavan-ng/trunk/build.log" "$PACK_DIR/build.log"
+        
+        # 3. 抓取韌體產物 (使用絕對路徑)
         if [ -d "$IMAGES_DIR" ]; then
-             cd "$IMAGES_DIR"
-             # 尋找所有 trx/bin 檔案
-             found_files=$(find . -maxdepth 1 -type f \( -name "*.trx" -o -name "*.bin" \))
-             
-             if [ -z "$found_files" ]; then
-                 echo "::error:: No firmware images found! Build likely failed."
-                 exit 1
-             fi
-
-             for file in $found_files; do
-                 # 去掉前面的 ./ 
-                 fname="${file#./}"
-                 fsize=$(stat -c %s "$fname")
-                 dest_path="../../output_pack/$fname"
+             echo "Scanning $IMAGES_DIR for images..."
+             # 尋找所有產物
+             find "$IMAGES_DIR" -maxdepth 1 -type f \( -name "*.trx" -o -name "*.bin" \) | while read -r file; do
+                 fname=$(basename "$file")
+                 fsize=$(stat -c %s "$file")
                  
-                 cp -v "$fname" "$dest_path"
+                 # 複製到 output_pack
+                 cp -v "$file" "$PACK_DIR/"
                  
-                 # 智慧判斷檔案類型
+                 # 報告
                  if (( fsize < 500000 )); then
-                     # 小於 500KB 認定為 U-Boot
                      echo "- 📦 **U-Boot**: \`$fname\` ($(numfmt --to=iec $fsize))" >> "$REPORT_FILE"
-                     echo "::notice:: Detected U-Boot image: $fname"
-                     HAS_UBOOT="true"
                  else
-                     # 大於 500KB 認定為 Firmware
                      echo "- 💿 **Firmware**: \`$fname\` ($(numfmt --to=iec $fsize))" >> "$REPORT_FILE"
-                     echo "Detected Firmware image: $fname"
                  fi
              done
-             cd ../../..
         else
-             echo "::error:: Images directory missing!"
-             exit 1
+             echo "::warning:: Images directory not found. Build might have failed completely."
+             echo "- ❌ **Error**: No images directory found." >> "$REPORT_FILE"
         fi
 
-        # 2. 備份 Config 和 Log
-        echo "Backup Debug Files..."
-        cp padavan-ng/trunk/.config output_pack/build.config
-        
-        # 嘗試備份實際 Kernel config
-        if [ -f "padavan-ng/trunk/linux-3.4.x/.config" ]; then
-             cp "padavan-ng/trunk/linux-3.4.x/.config" output_pack/kernel_actual.config
-        fi
-        
-        # 備份完整 Log
-        if [ -f "padavan-ng/trunk/build.log" ]; then
-             cp "padavan-ng/trunk/build.log" output_pack/build.log
-        else
-             echo "Build Log not found!" > output_pack/log_error.txt
-        fi
-
-        # 3. 生成 MD5
-        cd output_pack
+        # 4. 生成 MD5
+        cd "$PACK_DIR"
         md5sum * > md5sum.txt
-        cd ..
-
-        # 4. 準備 ENV 變數供 Release 使用
-        # 讀取剛剛生成的報告內容到變數
-        FILE_REPORT_CONTENT=$(cat output_pack/file_report.txt)
         
-        # 這裡需要特殊的 GitHub Actions 多行字串寫法
+        # 讀取報告供 Release 使用
+        FILE_REPORT_CONTENT=$(cat file_report.txt)
         {
           echo "FILE_REPORT<<EOF"
           echo "$FILE_REPORT_CONTENT"
           echo "EOF"
         } >> $GITHUB_ENV
         
-        # 找出最大的檔案作為「主韌體」來檢查大小
-        MAIN_FW=$(find output_pack -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2)
-        echo "MAIN_FW_PATH=$MAIN_FW" >> $GITHUB_ENV
+        # 找出最大的韌體檔案 (排除 uboot) 用於 Size Check
+        MAIN_FW=$(find . -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2)
+        # 轉換為絕對路徑
+        [ ! -z "$MAIN_FW" ] && echo "MAIN_FW_PATH=$PACK_DIR/${MAIN_FW#./}" >> $GITHUB_ENV
+        
+        cd "$WORK_DIR"
 
         # 5. 打包 Zip
         ZIP_NAME="padavan_pack_${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}.zip"
-        cd output_pack
-        zip -r "../$ZIP_NAME" .
-        cd ..
+        zip -j -r "$ZIP_NAME" "$PACK_DIR"
         
-        echo "ZIP_FILE_PATH=$(pwd)/$ZIP_NAME" >> $GITHUB_ENV
+        echo "ZIP_FILE_PATH=$WORK_DIR/$ZIP_NAME" >> $GITHUB_ENV
         echo "BUILD_TIMESTAMP=$(TZ='Asia/Taipei' date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
         echo "CONFIG_VENDOR=$CONFIG_VENDOR" >> $GITHUB_ENV
         echo "::endgroup::"
@@ -323,17 +310,16 @@ jobs:
     - name: Check firmware size
       run: |
         echo "::group::Size Check"
-        # 使用剛剛找出的主韌體路徑
         FW_FILE="${{ env.MAIN_FW_PATH }}"
-        
         partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
         
         if [ -f "$partitions" ] && [ -f "$FW_FILE" ]; then
            max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
            fw_size="$(stat -c %s "$FW_FILE")"
            
-           echo "Checking file: $FW_FILE ($fw_size bytes)"
-           echo "Max allowed: $max_fw_size bytes"
+           echo "Checking file: $FW_FILE"
+           echo "Current Size: $fw_size bytes"
+           echo "Max Size: $max_fw_size bytes"
            
            if ((fw_size > max_fw_size)); then
              echo "::error:: Firmware too large! $fw_size > $max_fw_size"
@@ -342,11 +328,11 @@ jobs:
              echo "::notice:: Size check passed."
            fi
         else
-           echo "::warning:: Skip size check (partitions config or fw file missing)."
+           echo "::warning:: Skip size check (file missing or partition config not found)."
         fi
         echo "::endgroup::"
 
-    # 10. 發布 Release (動態內容)
+    # 10. 發布 Release
     - name: Set Release Tag
       if: github.event_name == 'workflow_dispatch'
       run: |
@@ -361,19 +347,20 @@ jobs:
         tag: ${{ env.TAG_NAME }}
         name: ${{ inputs.target_select }} [${{ env.BUILD_TIMESTAMP }}]
         body: |
-          **Padavan 編譯報告 (100% Full Pack)**
+          **Padavan 編譯報告 (Debug Pack)**
           * **機型**: ${{ inputs.target_select }}
           * **時間**: ${{ env.BUILD_TIME }} (Taipei Time)
-          * **IP**: ${{ env.LANIP }} / **User**: admin / **Pass**: admin
+          * **User**: ${{ env.SIGNACCOUNT }} / **Pass**: ${{ env.SIGNPASSWORD }}
+          * **WiFi**: ${{ env.WIFI2GSSID }} / ${{ env.WIFI5GSSID }}
           
-          ### 📦 產物清單 (自動偵測)
+          ### 📦 產物偵測
           ${{ env.FILE_REPORT }}
           
-          ### 🛠 包含檔案
-          * `md5sum.txt` (校驗碼)
-          * `build.log` (除錯日誌)
-          * `.config` (編譯設定檔)
-          * **所有生成的 trx/bin 檔案**
+          ### 🛠 Debug 檔案 (已包含在 Zip)
+          * `defaults.h.txt` (檢查 IP/帳密 是否修改成功)
+          * `CN.dict.txt` (檢查語言檔)
+          * `build.log` (編譯日誌)
+          * `.config` (編譯參數)
         artifacts: ${{ env.ZIP_FILE_PATH }}
         allowUpdates: true
         artifactErrorsFailBuild: true

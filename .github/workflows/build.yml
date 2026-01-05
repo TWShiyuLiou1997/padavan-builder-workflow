@@ -1,4 +1,4 @@
-name: Build firmware (Ultimate Fix - Early Check)
+name: Build firmware (Ultimate Fix - Early Size Check)
 
 permissions:
   contents: write
@@ -39,7 +39,7 @@ jobs:
     - name: Checkout Workflow
       uses: actions/checkout@v4
 
-    # 0. 環境初檢 & 路徑鎖定
+    # 0. 環境初檢
     - name: Debug - Initial Environment Check
       run: |
         echo "::group::System Info"
@@ -214,28 +214,44 @@ jobs:
         ./build_firmware.sh 2>&1 | tee build.log
         echo "::endgroup::"
 
-    # 9. 智慧打包與產物偵測 (FIXED)
+    # 9. 智慧打包與產物偵測 (FIXED: Moved Size Check Here)
     - name: Smart-Pack & Debug Collection
       run: |
         echo "::group::Smart Packing"
         
+        # 1. 定義絕對路徑 (解決 Path Error 的關鍵!)
         WORK_DIR=$(pwd)
         PACK_DIR="$WORK_DIR/output_pack"
         IMAGES_DIR="$WORK_DIR/padavan-ng/trunk/images"
         PARTITIONS_FILE="$WORK_DIR/padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config"
         
         mkdir -p "$PACK_DIR"
+        
+        # 初始化報告
         REPORT_FILE="$PACK_DIR/file_report.txt"
         touch "$REPORT_FILE"
         
+        echo "Packing Artifacts to: $PACK_DIR"
+        
+        # 2. 備份關鍵配置檔 (加入 defaults.h, CN.dict 以便除錯)
         echo "Collecting Debug Configurations..."
+        
+        # 複製 .config (Build Config)
         [ -f "padavan-ng/trunk/.config" ] && cp "padavan-ng/trunk/.config" "$PACK_DIR/build.config"
+        
+        # 複製 defaults.h (含 IP/WiFi/密碼設定)
         [ -f "padavan-ng/trunk/user/shared/defaults.h" ] && cp "padavan-ng/trunk/user/shared/defaults.h" "$PACK_DIR/defaults.h.txt"
+        
+        # 複製 CN.dict (語言/字串檔)
         [ -f "padavan-ng/trunk/user/www/dict/CN.dict" ] && cp "padavan-ng/trunk/user/www/dict/CN.dict" "$PACK_DIR/CN.dict.txt"
+        
+        # 複製 Kernel Config
         [ -f "padavan-ng/trunk/linux-3.4.x/.config" ] && cp "padavan-ng/trunk/linux-3.4.x/.config" "$PACK_DIR/kernel.config"
+        
+        # 複製完整 Log
         [ -f "padavan-ng/trunk/build.log" ] && cp "padavan-ng/trunk/build.log" "$PACK_DIR/build.log"
         
-        # 3. 抓取韌體產物並立即檢查大小
+        # 3. 抓取韌體產物並立即檢查大小 (Check Size Here)
         if [ -d "$IMAGES_DIR" ]; then
              echo "Scanning $IMAGES_DIR for images..."
              
@@ -248,18 +264,21 @@ jobs:
                  echo "::warning:: Partition config not found, skipping size check."
              fi
 
+             # 尋找所有產物
              find "$IMAGES_DIR" -maxdepth 1 -type f \( -name "*.trx" -o -name "*.bin" \) | while read -r file; do
                  fname=$(basename "$file")
                  fsize=$(stat -c %s "$file")
                  
+                 # 複製到 output_pack
                  cp -v "$file" "$PACK_DIR/"
                  
+                 # 報告
                  if (( fsize < 500000 )); then
                      echo "- 📦 **U-Boot**: \`$fname\` ($(numfmt --to=iec $fsize))" >> "$REPORT_FILE"
                  else
                      echo "- 💿 **Firmware**: \`$fname\` ($(numfmt --to=iec $fsize))" >> "$REPORT_FILE"
                      
-                     # 在此處直接執行 Size Check
+                     # 立即執行 Size Check
                      if (( MAX_FW_SIZE > 0 )); then
                          if (( fsize > MAX_FW_SIZE )); then
                              echo "::error:: Firmware $fname ($fsize bytes) exceeds max size ($MAX_FW_SIZE bytes)!"
@@ -279,6 +298,7 @@ jobs:
         cd "$PACK_DIR"
         md5sum * > md5sum.txt
         
+        # 讀取報告供 Release 使用
         FILE_REPORT_CONTENT=$(cat file_report.txt)
         {
           echo "FILE_REPORT<<EOF"
@@ -286,7 +306,9 @@ jobs:
           echo "EOF"
         } >> $GITHUB_ENV
         
+        # 找出最大的韌體檔案 (排除 uboot) 
         MAIN_FW=$(find . -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2)
+        # 轉換為絕對路徑
         [ ! -z "$MAIN_FW" ] && echo "MAIN_FW_PATH=$PACK_DIR/${MAIN_FW#./}" >> $GITHUB_ENV
         
         cd "$WORK_DIR"
@@ -337,9 +359,9 @@ jobs:
           ${{ env.FILE_REPORT }}
           
           ### 🛠 Debug 檔案 (已包含在 Zip)
-          * `defaults.h.txt` (檢查參數)
-          * `CN.dict.txt` (檢查語言)
-          * `build.log` (完整日誌)
+          * `defaults.h.txt` (檢查 IP/帳密 是否修改成功)
+          * `CN.dict.txt` (檢查語言檔)
+          * `build.log` (編譯日誌)
           * `build.config` (編譯參數)
           * `kernel.config` (核心參數)
         artifacts: ${{ env.ZIP_FILE_PATH }}

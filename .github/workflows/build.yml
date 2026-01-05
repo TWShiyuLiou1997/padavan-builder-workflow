@@ -1,4 +1,4 @@
-name: Build firmware (Ultimate Path Fix)
+name: Build firmware (Ultimate Fix - Final)
 
 permissions:
   contents: write
@@ -39,14 +39,15 @@ jobs:
     - name: Checkout Workflow
       uses: actions/checkout@v4
 
-    # 0. 環境初檢 & 路徑鎖定 (關鍵修復)
+    # 0. 環境初檢 & 路徑鎖定 (The Anchor)
     - name: Debug - Initial Environment Check
       run: |
         echo "::group::System Info"
         echo "User: $(whoami)"
-        # 鎖定工作區根目錄
-        echo "WORKSPACE_ROOT=$(pwd)" >> $GITHUB_ENV
-        echo "Root Path: $(pwd)"
+        # 鎖定工作區根目錄，這是我們的「家」
+        WORKSPACE_ROOT=$(pwd)
+        echo "WORKSPACE_ROOT=$WORKSPACE_ROOT" >> $GITHUB_ENV
+        echo "Root Path: $WORKSPACE_ROOT"
         df -h
         echo "::endgroup::"
 
@@ -109,7 +110,7 @@ jobs:
         wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
         echo "::endgroup::"
 
-    # 4. 生成 Config (使用絕對路徑)
+    # 4. 生成 Config (邏輯核心：直接生成最終檔案到根目錄)
     - name: Prepare Template & Apply Nano
       run: |
         TNAME="${{ inputs.target_select }}"
@@ -121,7 +122,6 @@ jobs:
         PATTERN_A=$(echo "$TNAME" | sed 's/-/_/g')
         PATTERN_B=$(echo "$TNAME")
         
-        # find 輸出完整路徑
         TARGET_FILE=$(find "$TEMPLATE_DIR" -maxdepth 2 \( -iname "${PATTERN_A}.config" -o -iname "${PATTERN_B}.config" \) | head -n 1)
         
         if [ -z "$TARGET_FILE" ]; then
@@ -134,31 +134,33 @@ jobs:
              exit 1
         fi
         
-        # 儲存路徑供後續使用
-        echo "TARGET_FILE_PATH=$TARGET_FILE" >> $GITHUB_ENV
-        echo "Using Template: $TARGET_FILE"
+        # 關鍵動作 1：直接把模板複製到「家門口」 (根目錄下的 build.config)
+        # 這樣以後我們只認這個檔案，不再去管那深層的路徑了
+        FINAL_CONFIG="${{ env.WORKSPACE_ROOT }}/build.config"
+        cp -f "$TARGET_FILE" "$FINAL_CONFIG"
+        
+        echo "Template copied to: $FINAL_CONFIG"
         echo "::endgroup::"
         
+        # 關鍵動作 2：所有的修改直接針對這個「家門口」的檔案
         if [ "${{ inputs.nanoversion }}" == "true" ]; then
-             echo "::group::Nano Optimization (Direct Modify)"
+             echo "::group::Nano Optimization"
              for fs in ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS FUSE SWAP; do
-               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" "$TARGET_FILE"
+               sed -i "s/CONFIG_FIRMWARE_ENABLE_${fs}=y/CONFIG_FIRMWARE_ENABLE_${fs}=n/gi" "$FINAL_CONFIG"
              done
              modules=(UVC HID SERIAL AUDIO XFRM IMQ IFB NFSD NFSC CIFS NTFS_3G LPRD U2EC HDPARM PARTED SMBD WINS SMBD_SYSLOG FTPD RPL2TP EAP_PEAP DROPBEAR DROPBEAR_FAST_CODE OPENVPN SSWAN XUPNPD MINIDLNA FIREFLY FFMPEG_NEW TRANSMISSION TRANSMISSION_WEB_CONTROL ARIA QOS ARIA_WEB_CONTROL SCUTCLIENT GDUT_DRCOM DOGCOM MINIEAP NJIT_CLIENT SOFTETHERVPN_SERVER SOFTETHERVPN_CLIENT SOFTETHERVPN_CMD VLMCSD TTYD MSD_LITE LRZSZ HTOP NANO IPERF3 DUMP1090 RTL_SDR MTR SOCAT SRELAY MENTOHUST FRPC FRPS REDSOCKS SHADOWSOCKS XRAY V2RAY TROJAN SSOBFS SINGBOX NAIVEPROXY ADBYBY DNSFORWARDER SMARTDNS ADGUARDHOME ZEROTIER ALIDDNS DDNSTO ALDRIVER SQM WIREGUARD)
              for mod in "${modules[@]}"; do
-               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" "$TARGET_FILE"
+               sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" "$FINAL_CONFIG"
              done
-             echo "Nano optimization applied to $TARGET_FILE"
              echo "::endgroup::"
         fi
         
         echo "::group::Core Modules Enforcement"
         keep_modules=(OPENSSH SFTP TCPDUMP CURL HTTPS OPENSSL_EC OPENSSL_EXE)
         for kmod in "${keep_modules[@]}"; do
-             sed -i "/CONFIG_FIRMWARE_INCLUDE_${kmod}/d" "$TARGET_FILE"
-             echo "CONFIG_FIRMWARE_INCLUDE_${kmod}=y" >> "$TARGET_FILE"
+             sed -i "/CONFIG_FIRMWARE_INCLUDE_${kmod}/d" "$FINAL_CONFIG"
+             echo "CONFIG_FIRMWARE_INCLUDE_${kmod}=y" >> "$FINAL_CONFIG"
         done
-        echo "Core modules enforced on $TARGET_FILE"
         echo "::endgroup::"
 
     # 5. 應用自定義設定 (JSON)
@@ -215,39 +217,39 @@ jobs:
            sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
         fi
 
-    # 8. 開始編譯 (Late Copy)
+    # 8. 開始編譯 (Late Copy - Simplified)
     - name: Build firmware
       run: |
         echo "::group::Pre-Build Setup"
         
-        cd padavan-ng/trunk
+        # 這裡不管之前路徑如何，我們直接引用根目錄下的那個檔案
+        FINAL_CONFIG="${{ env.WORKSPACE_ROOT }}/build.config"
         
-        ./clear_tree.sh > /dev/null 2>&1
-        rm -rf tmp staging
-        
-        echo "Late Copy: Applying final config..."
-        echo "Source: ${{ env.TARGET_FILE_PATH }}"
-        
-        if [ ! -f "${{ env.TARGET_FILE_PATH }}" ]; then
-            echo "::error:: Template file lost! Path: ${{ env.TARGET_FILE_PATH }}"
+        # 防呆檢查
+        if [ ! -f "$FINAL_CONFIG" ]; then
+            echo "::error:: Critical: build.config is missing at $FINAL_CONFIG"
             exit 1
         fi
         
-        # 複製給編譯器
-        cp -f "${{ env.TARGET_FILE_PATH }}" .config
+        # 進入編譯目錄
+        cd padavan-ng/trunk
         
-        # 備份到根目錄 (使用絕對路徑)
-        cp -f "${{ env.TARGET_FILE_PATH }}" "${{ env.WORKSPACE_ROOT }}/build.config"
+        # 清理
+        ./clear_tree.sh > /dev/null 2>&1
+        rm -rf tmp staging
         
-        echo "Config applied successfully."
+        echo "Applying config from workspace root..."
+        # 複製到當前目錄 (.config)
+        cp -f "$FINAL_CONFIG" .config
+        
+        echo "Config applied. Starting compilation..."
         echo "::endgroup::"
         
-        echo "::group::Start Compilation"
         set -o pipefail
         ./build_firmware.sh 2>&1 | tee build.log
         echo "::endgroup::"
 
-    # 9. 智慧打包 (絕對路徑修復版)
+    # 9. 智慧打包 (絕對路徑版)
     - name: Smart-Pack & Debug Collection
       run: |
         echo "::group::Smart Packing"
@@ -261,6 +263,7 @@ jobs:
         touch "$REPORT_FILE"
         
         echo "Collecting Debug Configurations..."
+        # 這裡直接抓根目錄的 build.config
         [ -f "${{ env.WORKSPACE_ROOT }}/build.config" ] && cp "${{ env.WORKSPACE_ROOT }}/build.config" "$PACK_DIR/build.config"
         [ -f "${SRC_TRUNK}/user/shared/defaults.h" ] && cp "${SRC_TRUNK}/user/shared/defaults.h" "$PACK_DIR/defaults.h.txt"
         [ -f "${SRC_TRUNK}/user/www/dict/CN.dict" ] && cp "${SRC_TRUNK}/user/www/dict/CN.dict" "$PACK_DIR/CN.dict.txt"
@@ -269,7 +272,6 @@ jobs:
         
         if [ -d "$IMAGES_DIR" ]; then
              echo "Scanning images..."
-             # 使用 find 找到檔案完整路徑
              find "$IMAGES_DIR" -maxdepth 1 -type f \( -name "*.trx" -o -name "*.bin" \) | while read -r filepath; do
                  fname=$(basename "$filepath")
                  fsize=$(stat -c %s "$filepath")
@@ -299,7 +301,7 @@ jobs:
               echo "EOF"
             } >> $GITHUB_ENV
             
-            # 找出主韌體 (使用絕對路徑)
+            # 找出主韌體
             MAIN_FW=$(find "$PACK_DIR" -type f \( -name "*.trx" -o -name "*.bin" \) -printf "%s\t%p\n" | sort -n | tail -1 | cut -f2)
             [ ! -z "$MAIN_FW" ] && echo "MAIN_FW_PATH=$MAIN_FW" >> $GITHUB_ENV
             
@@ -362,7 +364,7 @@ jobs:
         tag: ${{ env.TAG_NAME }}
         name: ${{ inputs.target_select }} [${{ env.BUILD_TIMESTAMP }}]
         body: |
-          **Padavan 編譯報告 (Ultimate Path Fix)**
+          **Padavan 編譯報告 (Ultimate Fix)**
           * **機型**: ${{ inputs.target_select }}
           * **時間**: ${{ env.BUILD_TIME }} (Taipei Time)
           * **User**: ${{ env.SIGNACCOUNT }} / **Pass**: ${{ env.SIGNPASSWORD }}

@@ -129,10 +129,11 @@ jobs:
              exit 1
         fi
         
-        # 關鍵：將找到的檔案路徑存入 ENV，供 Step 8 使用
+        # 關鍵：取得 Template 的「絕對路徑」，存入 ENV，供 Step 8 使用
         # 這裡我們不複製，而是「直接修改」這個檔案 (Direct Modification)
-        echo "Target Template found: $TARGET_FILE"
-        echo "TARGET_FILE_PATH=$TARGET_FILE" >> $GITHUB_ENV
+        TARGET_FILE_ABS="$(pwd)/$TARGET_FILE"
+        echo "Target Template found: $TARGET_FILE_ABS"
+        echo "TARGET_FILE_PATH=$TARGET_FILE_ABS" >> $GITHUB_ENV
         echo "::endgroup::"
         
         if [ "${{ inputs.nanoversion }}" == "true" ]; then
@@ -233,10 +234,11 @@ jobs:
             exit 1
         fi
         
-        # 複製給編譯器用
+        # 複製給編譯器用 (覆蓋 .config)
         cp -f "${{ env.TARGET_FILE_PATH }}" .config
         
         # 複製一份到 workspace root 給打包步驟用 (檔名：build.config)
+        # 這裡用絕對路徑比較安全
         cp -f "${{ env.TARGET_FILE_PATH }}" ../../build.config
         
         echo "Config applied successfully."

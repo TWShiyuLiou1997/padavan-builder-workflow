@@ -1,4 +1,4 @@
-name: Build firmware (Ultimate Fix - Final)
+name: Build firmware (Ultimate Path Fix - Final)
 
 permissions:
   contents: write
@@ -39,15 +39,14 @@ jobs:
     - name: Checkout Workflow
       uses: actions/checkout@v4
 
-    # 0. 環境初檢 & 路徑鎖定 (The Anchor)
+    # 0. 環境初檢 & 路徑鎖定 (關鍵修復)
     - name: Debug - Initial Environment Check
       run: |
         echo "::group::System Info"
         echo "User: $(whoami)"
-        # 鎖定工作區根目錄，這是我們的「家」
-        WORKSPACE_ROOT=$(pwd)
-        echo "WORKSPACE_ROOT=$WORKSPACE_ROOT" >> $GITHUB_ENV
-        echo "Root Path: $WORKSPACE_ROOT"
+        # 鎖定工作區根目錄
+        echo "WORKSPACE_ROOT=$(pwd)" >> $GITHUB_ENV
+        echo "Root Path: $(pwd)"
         df -h
         echo "::endgroup::"
 

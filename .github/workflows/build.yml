@@ -137,7 +137,7 @@ jobs:
             echo "::group::Nano Optimization - Final Execution"
          
             # 1. [體積優化] 強制開啟 Size Optimization
-            sed -i "s/#CONFIG_CC_OPTIMIZE_FOR_SIZE=y/CONFIG_CC_OPTIMIZE_FOR_SIZE=y/g" "$FINAL_CONFIG"
+            #sed -i "s/#CONFIG_CC_OPTIMIZE_FOR_SIZE=y/CONFIG_CC_OPTIMIZE_FOR_SIZE=y/g" "$FINAL_CONFIG"
          
             # 2. [基礎切除] 停用 USB, 檔案系統, Swap, 媒體驅動
             for feat in USB ANTFS FAT EXFAT EXT2 EXT3 EXT4 XFS HFS FUSE SWAP BACKPORTED; do

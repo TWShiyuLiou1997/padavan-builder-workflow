@@ -328,6 +328,11 @@ jobs:
         run: |
           echo "::group::Smart Packing"
           
+          # 0. 載入編譯後的變數 (修復 Partition Check 警告)
+          if [ -f "padavan-ng/trunk/.config" ]; then
+            source "padavan-ng/trunk/.config"
+          fi
+
           # 1. 定義絕對路徑
           WORK_DIR=$(pwd)
           PACK_DIR="$WORK_DIR/output_pack"
@@ -414,9 +419,13 @@ jobs:
             echo "- ❌ **Error**: No images directory found." >> "$REPORT_FILE"
           fi
 
-          # 4. 生成 MD5
+          # 4. 生成 MD5 (修復：只對檔案生成，避開資料夾)
           cd "$PACK_DIR"
-          md5sum * > md5sum.txt
+          for f in *; do
+            if [ -f "$f" ]; then
+              md5sum "$f" >> md5sum.txt
+            fi
+          done
           
           # 讀取報告供 Release 使用
           FILE_REPORT_CONTENT=$(cat file_report.txt)

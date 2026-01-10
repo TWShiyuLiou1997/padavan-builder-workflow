@@ -237,30 +237,28 @@ jobs:
             sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
           fi
 
-      # 7.5. [安靜模式] 升級 iptables 1.8.11 並屏蔽警告
+      # 7.5. [精準修復] 升級 iptables 1.8.11 + 修正 Makefile + 屏蔽警告
       - name: 🔥 Auto Upgrade iptables 1.8.11 & Patch
         run: |
           echo "::group::Iptables Upgrade & Patching"
-          # 定義新版本資訊
-          NEW_VER="1.8.11"
-          NEW_HASH="0585f92271df0515152a5146c823fc195724588e1467406a03c3917417e8c057"
+          NEW_VER="iptables-1.8.11"
           
-          # 1. 找到 iptables 的 Makefile
+          # 1. 鎖定 Makefile (Padavan 的結構)
           IPT_MAKEFILE=$(find padavan-ng/trunk/user/iptables -name Makefile | head -n 1)
           IPT_DIR=$(dirname "$IPT_MAKEFILE")
           echo "✅ 鎖定 Makefile: $IPT_MAKEFILE"
           
-          # 2. 修改版本號與 Hash
-          sed -i "s/1\.8\.10/$NEW_VER/g" "$IPT_MAKEFILE"
-          # 強力替換 Hash (覆蓋各種可能的變數名稱)
-          if grep -q "PKG_HASH" "$IPT_MAKEFILE"; then
-              sed -i "s/^PKG_HASH:=.*/PKG_HASH:=$NEW_HASH/" "$IPT_MAKEFILE"
-          else
-              sed -i "s/^PKG_MD5SUM:=.*/PKG_HASH:=$NEW_HASH/" "$IPT_MAKEFILE"
-          fi
-          echo "🆙 版本已升級至 $NEW_VER"
+          # 2. 修改版本號 (SRC_NAME=iptables-1.8.10 -> 1.8.11)
+          # 因為您的 Makefile 是自動組裝 URL，所以改了 Name 就會自動下載新版
+          sed -i "s/SRC_NAME=iptables-1.8.10/SRC_NAME=$NEW_VER/g" "$IPT_MAKEFILE"
+          echo "🆙 版本定義已更新為: $NEW_VER"
 
-          # 3. 生成補丁檔 (放在 iptables 目錄下)
+          # 3. [關鍵修復] 移除導致編譯失敗的 CLASSIFY 複製指令
+          # 在 1.8.11 中，我們不需要(也無法)從 disabled 資料夾複製這個檔案
+          sed -i '/libxt_CLASSIFY/d' "$IPT_MAKEFILE"
+          echo "🔧 已移除過時的 CLASSIFY cp 指令 (修復 Error 1)"
+
+          # 4. 生成屏蔽警告的補丁 (999-suppress-warnings.patch)
           cat << 'EOF' > "$IPT_DIR/999-suppress-warnings.patch"
           --- a/libxtables/xtables.c
           +++ b/libxtables/xtables.c
@@ -291,22 +289,13 @@ jobs:
           EOF
           echo "🛡️ 補丁已建立於: $IPT_DIR/999-suppress-warnings.patch"
 
-          # 4. 關鍵一步：修改 Makefile 以應用補丁
-          # 邏輯：找到 "tar xf" (解壓) 的指令，在其後方追加 "&& patch ..."
-          # 這樣可以確保源碼解壓後，立刻被打上補丁，然後才開始編譯
-          if grep -q "tar " "$IPT_MAKEFILE"; then
-              # 備份原始 Makefile
-              cp "$IPT_MAKEFILE" "$IPT_MAKEFILE.bak"
-              
-              # 在 tar 解壓命令後加上 patch 指令
-              # 注意：這裡假設 Makefile 使用 $(SRC_NAME) 作為目錄名，這是標準做法
-              sed -i 's|tar -xf $(SRC_NAME).tar.xz|tar -xf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch|' "$IPT_MAKEFILE"
-              sed -i 's|tar xf $(SRC_NAME).tar.xz|tar xf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch|' "$IPT_MAKEFILE"
-              
-              echo "✅ Makefile 已修改，將在解壓時自動應用補丁。"
-          else
-              echo "⚠️ 警告：無法在 Makefile 中找到解壓指令，補丁可能無法應用！"
-          fi
+          # 5. [注入補丁邏輯] 修改 Makefile 的解壓步驟
+          # 原本: tar xJf $(SRC_NAME).tar.xz;
+          # 修改後: tar xJf $(SRC_NAME).tar.xz && patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch;
+          # 這樣確保每次解壓後，補丁都會自動應用
+          sed -i 's|tar xJf $(SRC_NAME).tar.xz;|tar xJf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch;|' "$IPT_MAKEFILE"
+          
+          echo "✅ Makefile 解壓邏輯已修改，將自動應用補丁。"
           echo "::endgroup::"
 
       # 8. 開始編譯

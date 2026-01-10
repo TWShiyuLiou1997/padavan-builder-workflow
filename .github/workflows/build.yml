@@ -308,7 +308,7 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (v4 直通版)
+      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (v5 連結修復版)
       - name: 🔥 Network Tools Upgrade (ebtables & arptables)
         run: |
           echo "::group::Ebtables Upgrade & Arptables Addon"
@@ -330,7 +330,7 @@ jobs:
           EBT_TAR="$EBT_VER.tar.gz"
           EBT_URL="https://www.netfilter.org/pub/ebtables/$EBT_TAR"
           
-          # 清理舊的源碼目錄 (保留外層 Makefile 稍後覆蓋)
+          # 清理舊的源碼目錄
           rm -rf ebtables-v* ebtables-2* "$EBT_TAR"
           
           # 1. 下載
@@ -342,11 +342,7 @@ jobs:
           tar -xf "$EBT_TAR" || exit 1
           rm -f "$EBT_TAR"
           
-          # 3. 顯示當前目錄結構 (除錯用，確認解壓結果)
-          echo "📂 Directory listing after extraction:"
-          ls -F
-          
-          # 4. 自動偵測目錄 (找尋 ebtables 開頭的資料夾)
+          # 3. 自動偵測目錄
           EBT_SRC_NAME=$(ls -d ebtables-2*/ | head -n 1 | sed 's/\///')
           echo "   Target Source Directory: [$EBT_SRC_NAME]"
           
@@ -356,14 +352,11 @@ jobs:
           fi
           
           echo "🔧 Creating NEW wrapper Makefile..."
-          # 5. 建立全新的 Wrapper Makefile
-          # 我們在這裡直接把 -static 塞進 CFLAGS 和 LDFLAGS
-          # 這樣就不用去改內層原始碼，避免 'File not found' 錯誤
+          # 4. 建立全新的 Wrapper Makefile (強制靜態編譯)
           cat << EOF > Makefile
           SRC_NAME=$EBT_SRC_NAME
           
           all:
-          	# 直接呼叫內層 Makefile，並強制覆蓋編譯參數
           	\$(MAKE) -j\$(HOST_NCPU) -C \$(SRC_NAME) \
           		CC="\$(CC)" \
           		CFLAGS="-O2 -Wall -static" \
@@ -375,14 +368,11 @@ jobs:
           	\$(MAKE) -C \$(SRC_NAME) clean
           
           romfs:
-          	# 注意：ebtables 2.0.11 編譯出來的檔案通常叫 ebtables
           	\$(ROMFSINST) \$(SRC_NAME)/ebtables /bin/ebtables
           	\$(ROMFSINST) \$(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
           echo "✅ Ebtables configured."
-          
-          # 回到根目錄準備處理下一個
           cd - > /dev/null
           
           # ========================================
@@ -398,15 +388,27 @@ jobs:
           
           # 檢查是否已經存在源碼
           if [ ! -f "Makefile" ] || ! grep -q "arptables" "Makefile"; then
-            ARP_TAR="arptables-v0.0.5.tar.gz"
-            wget --no-check-certificate "https://www.netfilter.org/pub/arptables/arptables-v0.0.5.tar.gz" -O "$ARP_TAR" || exit 1
             
+            # --- 修正點：移除網址中的 v，並修正檔名變數 ---
+            ARP_TAR="arptables-0.0.5.tar.gz"
+            ARP_URL="https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz"
+            
+            echo "   Downloading from $ARP_URL ..."
+            wget --no-check-certificate "$ARP_URL" -O "$ARP_TAR" || exit 1
+            
+            echo "   Extracting..."
             tar -xf "$ARP_TAR" || exit 1
             rm -f "$ARP_TAR"
             
-            # 偵測 Arptables 目錄
-            ARP_SRC_NAME=$(ls -d arptables-v*/ | head -n 1 | sed 's/\///')
+            # --- 修正點：偵測目錄改為 arptables-0* (不強制 v 開頭) ---
+            ARP_SRC_NAME=$(ls -d arptables-0*/ | head -n 1 | sed 's/\///')
             echo "   Detected arptables source: [$ARP_SRC_NAME]"
+            
+            if [ -z "$ARP_SRC_NAME" ]; then
+               echo "❌ Error: Could not detect arptables source directory!"
+               ls -F
+               exit 1
+            fi
           
             # 建立 Wrapper Makefile
             cat << EOF > Makefile

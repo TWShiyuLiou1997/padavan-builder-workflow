@@ -308,7 +308,7 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (v5 連結修復版)
+      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (v6 路徑修復版)
       - name: 🔥 Network Tools Upgrade (ebtables & arptables)
         run: |
           echo "::group::Ebtables Upgrade & Arptables Addon"
@@ -373,6 +373,7 @@ jobs:
           EOF
           
           echo "✅ Ebtables configured."
+          # 回到根目錄
           cd - > /dev/null
           
           # ========================================
@@ -389,7 +390,6 @@ jobs:
           # 檢查是否已經存在源碼
           if [ ! -f "Makefile" ] || ! grep -q "arptables" "Makefile"; then
             
-            # --- 修正點：移除網址中的 v，並修正檔名變數 ---
             ARP_TAR="arptables-0.0.5.tar.gz"
             ARP_URL="https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz"
             
@@ -400,7 +400,7 @@ jobs:
             tar -xf "$ARP_TAR" || exit 1
             rm -f "$ARP_TAR"
             
-            # --- 修正點：偵測目錄改為 arptables-0* (不強制 v 開頭) ---
+            # 偵測目錄
             ARP_SRC_NAME=$(ls -d arptables-0*/ | head -n 1 | sed 's/\///')
             echo "   Detected arptables source: [$ARP_SRC_NAME]"
             
@@ -423,8 +423,10 @@ jobs:
           	\$(MAKE) -C \$(SRC_NAME) clean
           EOF
           
-            # 修改 user/Makefile 加入編譯列表
-            cd "$USER_DIR"
+            # --- 修正重點：回到上一層目錄 (user/) 來修改 user/Makefile ---
+            echo "🔧 Registering arptables in user/Makefile..."
+            cd ..
+            
             if grep -q "ebtables" Makefile; then
                if ! grep -q "arptables" Makefile; then
                    sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile
@@ -440,7 +442,9 @@ jobs:
           # ========================================
           # 3. 核心支援 (Kernel Config)
           # ========================================
+          # 這裡使用 GITHUB_WORKSPACE 確保回到專案根目錄
           cd "$GITHUB_WORKSPACE"
+          
           TARGET_KCONF="padavan-ng/trunk/linux-3.4.x/.config"
           
           if [ -f "$TARGET_KCONF" ]; then

@@ -237,43 +237,31 @@ jobs:
             sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
           fi
 
-      # 7.5. [完美修復] 升級 iptables 1.8.11 (修復依賴與路徑)
+      # 7.5. [全局修復] 升級 iptables 1.8.11 + 修復所有依賴包路徑
       - name: 🔥 Auto Upgrade iptables 1.8.11 & Patch
         run: |
           echo "::group::Iptables Upgrade & Patching"
           NEW_VER="iptables-1.8.11"
+          OLD_VER_STR="iptables-1.8.10"
           
-          # 1. 鎖定 Makefile
+          # --- Part 1: 處理 iptables 本體 ---
           IPT_MAKEFILE=$(find padavan-ng/trunk/user/iptables -name Makefile | head -n 1)
           IPT_DIR=$(dirname "$IPT_MAKEFILE")
-          echo "✅ 鎖定 Makefile: $IPT_MAKEFILE"
+          echo "✅ 鎖定 iptables Makefile: $IPT_MAKEFILE"
           
-          # 2. 修改版本號
-          sed -i "s/SRC_NAME=iptables-1.8.10/SRC_NAME=$NEW_VER/g" "$IPT_MAKEFILE"
+          # 1. 修改版本號
+          sed -i "s/SRC_NAME=$OLD_VER_STR/SRC_NAME=$NEW_VER/g" "$IPT_MAKEFILE"
           
-          # =======================================================
-          # 🔧 [關鍵修復 1] 恢復正常的構建流程
-          # 原本: all: config_test
-          # 修改: all: download_test extract_test config_test
-          # 原因: 必須強制執行下載和解壓，否則找不到資料夾！
-          # =======================================================
+          # 2. 恢復正常的構建流程 (解決 cd error)
           sed -i 's/^all: config_test/all: download_test extract_test config_test/' "$IPT_MAKEFILE"
-          echo "🔧 已恢復 Makefile 的下載與解壓依賴"
-
-          # =======================================================
-          # 🔧 [關鍵修復 2] 移除 autogen.sh
-          # 原因: Release 版 tarball 不需要也不包含此腳本，執行會報錯
-          # =======================================================
+          
+          # 3. 移除 autogen.sh (解決 not found error)
           sed -i '/.\/autogen.sh/d' "$IPT_MAKEFILE"
-          echo "🔧 已移除 autogen.sh 指令"
-
-          # =======================================================
-          # 🔧 [關鍵修復 3] 清理過時的 extensions/disabled 複製指令
-          # =======================================================
+          
+          # 4. 清理過時的 extensions/disabled 複製指令 (解決 copy error)
           sed -i '/extensions\/disabled\//d' "$IPT_MAKEFILE"
-          echo "🔧 已清除所有過時的 extensions/disabled 複製指令"
 
-          # 4. 生成屏蔽警告的補丁 (999-suppress-warnings.patch)
+          # 5. 生成屏蔽警告的補丁
           cat << 'EOF' > "$IPT_DIR/999-suppress-warnings.patch"
           --- a/libxtables/xtables.c
           +++ b/libxtables/xtables.c
@@ -302,13 +290,22 @@ jobs:
            
            	for (ptr = xtables_targets; ptr; ptr = ptr->next) {
           EOF
-          echo "🛡️ 補丁已建立於: $IPT_DIR/999-suppress-warnings.patch"
-
-          # 5. [注入補丁邏輯] 修改 Makefile 的解壓步驟
-          # 確保解壓後自動打補丁
+          
+          # 6. 注入補丁應用邏輯
           sed -i 's|tar xJf $(SRC_NAME).tar.xz;|tar xJf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch;|' "$IPT_MAKEFILE"
           
-          echo "✅ Makefile 修復完成，準備編譯..."
+          echo "✅ Iptables 本體修復完成。"
+
+          # --- Part 2: [新增] 修復所有依賴 iptables 的其他軟體 (MiniUPnPD 等) ---
+          echo "🔍 開始掃描並修復依賴舊版 iptables 的其他套件..."
+          
+          # 搜尋 trunk/user 下所有含有 "iptables-1.8.10" 字串的 Makefile
+          grep -rl "$OLD_VER_STR" padavan-ng/trunk/user/ | while read -r file ; do
+              echo "  - 修復路徑: $file"
+              sed -i "s/$OLD_VER_STR/$NEW_VER/g" "$file"
+          done
+          
+          echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
       # 8. 開始編譯

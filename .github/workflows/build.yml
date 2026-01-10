@@ -237,26 +237,28 @@ jobs:
             sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
           fi
 
-      # 7.5. [精準修復] 升級 iptables 1.8.11 + 修正 Makefile + 屏蔽警告
+      # 7.5. [終極修復] 升級 iptables 1.8.11 + 全面清理 Makefile + 屏蔽警告
       - name: 🔥 Auto Upgrade iptables 1.8.11 & Patch
         run: |
           echo "::group::Iptables Upgrade & Patching"
           NEW_VER="iptables-1.8.11"
           
-          # 1. 鎖定 Makefile (Padavan 的結構)
+          # 1. 鎖定 Makefile
           IPT_MAKEFILE=$(find padavan-ng/trunk/user/iptables -name Makefile | head -n 1)
           IPT_DIR=$(dirname "$IPT_MAKEFILE")
           echo "✅ 鎖定 Makefile: $IPT_MAKEFILE"
           
-          # 2. 修改版本號 (SRC_NAME=iptables-1.8.10 -> 1.8.11)
-          # 因為您的 Makefile 是自動組裝 URL，所以改了 Name 就會自動下載新版
+          # 2. 修改版本號
           sed -i "s/SRC_NAME=iptables-1.8.10/SRC_NAME=$NEW_VER/g" "$IPT_MAKEFILE"
           echo "🆙 版本定義已更新為: $NEW_VER"
 
-          # 3. [關鍵修復] 移除導致編譯失敗的 CLASSIFY 複製指令
-          # 在 1.8.11 中，我們不需要(也無法)從 disabled 資料夾複製這個檔案
-          sed -i '/libxt_CLASSIFY/d' "$IPT_MAKEFILE"
-          echo "🔧 已移除過時的 CLASSIFY cp 指令 (修復 Error 1)"
+          # =======================================================
+          # 🔧 [終極修復] 一次性解決所有 "No such file" 錯誤
+          # 邏輯：刪除所有包含 "extensions/disabled/" 的指令行
+          # 效果：conntrack, physdev, string, classify 等等都不會再報錯
+          # =======================================================
+          sed -i '/extensions\/disabled\//d' "$IPT_MAKEFILE"
+          echo "🔧 已清除所有過時的 extensions/disabled 複製指令"
 
           # 4. 生成屏蔽警告的補丁 (999-suppress-warnings.patch)
           cat << 'EOF' > "$IPT_DIR/999-suppress-warnings.patch"
@@ -290,9 +292,6 @@ jobs:
           echo "🛡️ 補丁已建立於: $IPT_DIR/999-suppress-warnings.patch"
 
           # 5. [注入補丁邏輯] 修改 Makefile 的解壓步驟
-          # 原本: tar xJf $(SRC_NAME).tar.xz;
-          # 修改後: tar xJf $(SRC_NAME).tar.xz && patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch;
-          # 這樣確保每次解壓後，補丁都會自動應用
           sed -i 's|tar xJf $(SRC_NAME).tar.xz;|tar xJf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch;|' "$IPT_MAKEFILE"
           
           echo "✅ Makefile 解壓邏輯已修改，將自動應用補丁。"

@@ -237,7 +237,7 @@ jobs:
             sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
           fi
 
-      # 7.5. [終極修復] 升級 iptables 1.8.11 + 全面清理 Makefile + 屏蔽警告
+      # 7.5. [完美修復] 升級 iptables 1.8.11 (修復依賴與路徑)
       - name: 🔥 Auto Upgrade iptables 1.8.11 & Patch
         run: |
           echo "::group::Iptables Upgrade & Patching"
@@ -250,12 +250,25 @@ jobs:
           
           # 2. 修改版本號
           sed -i "s/SRC_NAME=iptables-1.8.10/SRC_NAME=$NEW_VER/g" "$IPT_MAKEFILE"
-          echo "🆙 版本定義已更新為: $NEW_VER"
+          
+          # =======================================================
+          # 🔧 [關鍵修復 1] 恢復正常的構建流程
+          # 原本: all: config_test
+          # 修改: all: download_test extract_test config_test
+          # 原因: 必須強制執行下載和解壓，否則找不到資料夾！
+          # =======================================================
+          sed -i 's/^all: config_test/all: download_test extract_test config_test/' "$IPT_MAKEFILE"
+          echo "🔧 已恢復 Makefile 的下載與解壓依賴"
 
           # =======================================================
-          # 🔧 [終極修復] 一次性解決所有 "No such file" 錯誤
-          # 邏輯：刪除所有包含 "extensions/disabled/" 的指令行
-          # 效果：conntrack, physdev, string, classify 等等都不會再報錯
+          # 🔧 [關鍵修復 2] 移除 autogen.sh
+          # 原因: Release 版 tarball 不需要也不包含此腳本，執行會報錯
+          # =======================================================
+          sed -i '/.\/autogen.sh/d' "$IPT_MAKEFILE"
+          echo "🔧 已移除 autogen.sh 指令"
+
+          # =======================================================
+          # 🔧 [關鍵修復 3] 清理過時的 extensions/disabled 複製指令
           # =======================================================
           sed -i '/extensions\/disabled\//d' "$IPT_MAKEFILE"
           echo "🔧 已清除所有過時的 extensions/disabled 複製指令"
@@ -292,9 +305,10 @@ jobs:
           echo "🛡️ 補丁已建立於: $IPT_DIR/999-suppress-warnings.patch"
 
           # 5. [注入補丁邏輯] 修改 Makefile 的解壓步驟
+          # 確保解壓後自動打補丁
           sed -i 's|tar xJf $(SRC_NAME).tar.xz;|tar xJf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch;|' "$IPT_MAKEFILE"
           
-          echo "✅ Makefile 解壓邏輯已修改，將自動應用補丁。"
+          echo "✅ Makefile 修復完成，準備編譯..."
           echo "::endgroup::"
 
       # 8. 開始編譯

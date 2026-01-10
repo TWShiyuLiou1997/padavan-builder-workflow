@@ -308,7 +308,7 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (穩健除錯版)
+      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (v4 直通版)
       - name: 🔥 Network Tools Upgrade (ebtables & arptables)
         run: |
           echo "::group::Ebtables Upgrade & Arptables Addon"
@@ -333,86 +333,81 @@ jobs:
           # 清理舊的源碼目錄 (保留外層 Makefile 稍後覆蓋)
           rm -rf ebtables-v* ebtables-2* "$EBT_TAR"
           
-          # 1. 下載 (顯示詳細進度，失敗則退出)
+          # 1. 下載
           echo "   Downloading from $EBT_URL ..."
           wget --no-check-certificate "$EBT_URL" -O "$EBT_TAR" || exit 1
           
-          # 2. 解壓縮 (直接解壓，讓它自己建立目錄)
+          # 2. 解壓縮
           echo "   Extracting..."
           tar -xf "$EBT_TAR" || exit 1
           rm -f "$EBT_TAR"
           
-          # 3. 自動偵測解壓後的目錄名稱 (避免猜錯名字)
-          # 找出當前目錄下符合 ebtables-* 的子目錄
-          EBT_SRC_NAME=$(find . -maxdepth 1 -type d -name "ebtables-*" | head -n 1 | sed 's|./||')
-          echo "   Detected source directory: $EBT_SRC_NAME"
+          # 3. 顯示當前目錄結構 (除錯用，確認解壓結果)
+          echo "📂 Directory listing after extraction:"
+          ls -F
+          
+          # 4. 自動偵測目錄 (找尋 ebtables 開頭的資料夾)
+          EBT_SRC_NAME=$(ls -d ebtables-2*/ | head -n 1 | sed 's/\///')
+          echo "   Target Source Directory: [$EBT_SRC_NAME]"
           
           if [ -z "$EBT_SRC_NAME" ]; then
-             echo "❌ Error: Failed to detect ebtables source directory!"
-             ls -la
+             echo "❌ Error: Could not detect directory starting with ebtables-2* !"
              exit 1
           fi
           
-          echo "🔧 Rewriting wrapper Makefile..."
-          # 4. 重寫外層 Wrapper Makefile
-          # 讓 SRC_NAME 指向我們剛剛偵測到的目錄
+          echo "🔧 Creating NEW wrapper Makefile..."
+          # 5. 建立全新的 Wrapper Makefile
+          # 我們在這裡直接把 -static 塞進 CFLAGS 和 LDFLAGS
+          # 這樣就不用去改內層原始碼，避免 'File not found' 錯誤
           cat << EOF > Makefile
           SRC_NAME=$EBT_SRC_NAME
-
+          
           all:
+          	# 直接呼叫內層 Makefile，並強制覆蓋編譯參數
           	\$(MAKE) -j\$(HOST_NCPU) -C \$(SRC_NAME) \
           		CC="\$(CC)" \
-          		CFLAGS="-O2 -Wall" \
+          		CFLAGS="-O2 -Wall -static" \
           		LDFLAGS="-static" \
           		KERNEL_INCLUDES=\$(KERNEL_HEADERS_PATH)
-
+          
           clean:
           	rm -f \$(SRC_NAME)/ebtables
           	\$(MAKE) -C \$(SRC_NAME) clean
-
+          
           romfs:
+          	# 注意：ebtables 2.0.11 編譯出來的檔案通常叫 ebtables
           	\$(ROMFSINST) \$(SRC_NAME)/ebtables /bin/ebtables
           	\$(ROMFSINST) \$(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
-          # 5. 修改內層 Makefile (補上 static 參數)
-          INNER_MAKE="$EBT_SRC_NAME/Makefile"
-          if [ -f "$INNER_MAKE" ]; then
-             sed -i 's/CFLAGS:=-O2/CFLAGS:=-O2 -static/g' "$INNER_MAKE"
-             echo "✅ Ebtables patched successfully."
-          else
-             echo "❌ Error: Inner Makefile not found at $INNER_MAKE"
-             exit 1
-          fi
+          echo "✅ Ebtables configured."
           
           # 回到根目錄準備處理下一個
           cd - > /dev/null
-
+          
           # ========================================
           # 2. 新增 Arptables v0.0.5
           # ========================================
           echo "⬇️ Processing Arptables..."
           
-          # 如果目錄不存在則建立
           if [ ! -d "$ARP_ROOT" ]; then
             mkdir -p "$ARP_ROOT"
           fi
           
           cd "$ARP_ROOT" || exit 1
           
-          # 檢查是否已經存在源碼，避免重複執行
+          # 檢查是否已經存在源碼
           if [ ! -f "Makefile" ] || ! grep -q "arptables" "Makefile"; then
             ARP_TAR="arptables-v0.0.5.tar.gz"
-            # 註：Netfilter 的 arptables 網址有時不同，這裡使用 v0.0.5
             wget --no-check-certificate "https://www.netfilter.org/pub/arptables/arptables-v0.0.5.tar.gz" -O "$ARP_TAR" || exit 1
             
             tar -xf "$ARP_TAR" || exit 1
             rm -f "$ARP_TAR"
             
-            # 自動偵測目錄名稱 (通常是 arptables-v0.0.5)
-            ARP_SRC_NAME=$(find . -maxdepth 1 -type d -name "arptables-*" | head -n 1 | sed 's|./||')
-            echo "   Detected arptables source: $ARP_SRC_NAME"
-
+            # 偵測 Arptables 目錄
+            ARP_SRC_NAME=$(ls -d arptables-v*/ | head -n 1 | sed 's/\///')
+            echo "   Detected arptables source: [$ARP_SRC_NAME]"
+          
             # 建立 Wrapper Makefile
             cat << EOF > Makefile
           SRC_NAME=$ARP_SRC_NAME
@@ -425,8 +420,8 @@ jobs:
           clean:
           	\$(MAKE) -C \$(SRC_NAME) clean
           EOF
-
-            # 回到 user 目錄去修改全域編譯清單
+          
+            # 修改 user/Makefile 加入編譯列表
             cd "$USER_DIR"
             if grep -q "ebtables" Makefile; then
                if ! grep -q "arptables" Makefile; then
@@ -439,23 +434,19 @@ jobs:
           else
             echo "⚠️ Arptables seems already configured."
           fi
-
+          
           # ========================================
           # 3. 核心支援 (Kernel Config)
           # ========================================
-          # 回到專案根目錄 (假設腳本起點在根目錄)
           cd "$GITHUB_WORKSPACE"
-          
           TARGET_KCONF="padavan-ng/trunk/linux-3.4.x/.config"
           
           if [ -f "$TARGET_KCONF" ]; then
              echo "🔧 Enabling Kernel modules..."
-             # 使用通配符確保取代舊設定
              sed -i 's/^.*CONFIG_IP_NF_ARPTABLES.*/CONFIG_IP_NF_ARPTABLES=m/' "$TARGET_KCONF"
              sed -i 's/^.*CONFIG_IP_NF_ARPFILTER.*/CONFIG_IP_NF_ARPFILTER=m/' "$TARGET_KCONF"
              sed -i 's/^.*CONFIG_IP_NF_ARP_MANGLE.*/CONFIG_IP_NF_ARP_MANGLE=m/' "$TARGET_KCONF"
              
-             # 如果找不到就新增
              grep -q "CONFIG_IP_NF_ARPTABLES" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPTABLES=m" >> "$TARGET_KCONF"
              grep -q "CONFIG_IP_NF_ARPFILTER" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPFILTER=m" >> "$TARGET_KCONF"
              grep -q "CONFIG_IP_NF_ARP_MANGLE" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARP_MANGLE=m" >> "$TARGET_KCONF"

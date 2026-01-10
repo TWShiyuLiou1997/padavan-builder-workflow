@@ -308,52 +308,65 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables
+      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (修正版)
       - name: 🔥 Network Tools Upgrade (ebtables & arptables)
         run: |
           echo "::group::Ebtables Upgrade & Arptables Addon"
           USER_DIR="padavan-ng/trunk/user"
           
           # ========================================
-          # 1. 升級 Ebtables 到 2.0.11
+          # 1. 升級 Ebtables 到 2.0.11 (Fix Static Build)
           # ========================================
           EBT_DIR="$USER_DIR/ebtables"
           EBT_VER="ebtables-2.0.11"
           EBT_URL="https://www.netfilter.org/pub/ebtables/$EBT_VER.tar.gz"
           
           echo "⬇️ Downloading $EBT_VER..."
+          rm -rf "$EBT_DIR/$EBT_VER" # 清除舊嘗試
           wget -qP "$EBT_DIR" "$EBT_URL"
           tar -xf "$EBT_DIR/$EBT_VER.tar.gz" -C "$EBT_DIR"
           
-          # 修改 ebtables 的 Makefile 以適配新版本
-          # 注意：v2.0.11 的結構可能需要我們強制指定編譯參數
-          if [ -f "$EBT_DIR/Makefile" ]; then
-            echo "🔧 Updating ebtables Makefile..."
-            # 1. 修改版本號
-            sed -i "s/SRC_NAME=ebtables-2.0.10-4/SRC_NAME=$EBT_VER/g" "$EBT_DIR/Makefile"
-            
-            # 2. v2.0.11 可能對 'static' target 的定義不同，我們確保它傳遞正確的 CFLAGS
-            # 在編譯參數中加入 -static 確保獨立運行
-            sed -i 's/CFLAGS:=-O2/CFLAGS:=-O2 -static/g' "$EBT_DIR/$EBT_VER/Makefile" || true
-          fi
-          echo "✅ Ebtables upgraded to $EBT_VER"
+          echo "🔧 Rewriting ebtables wrapper Makefile..."
+          # 直接重寫外層 Makefile，確保參數正確，不使用舊的 static target
+          cat << EOF > "$EBT_DIR/Makefile"
+          SRC_NAME=$EBT_VER
+
+          all:
+          	# 強制傳遞 LDFLAGS=-static 以進行靜態編譯
+          	\$(MAKE) -j\$(HOST_NCPU) -C \$(SRC_NAME) \
+          		CC="\$(CC)" \
+          		CFLAGS="-O2 -Wall" \
+          		LDFLAGS="-static" \
+          		KERNEL_INCLUDES=\$(KERNEL_HEADERS_PATH)
+
+          clean:
+          	rm -f \$(SRC_NAME)/ebtables
+          	\$(MAKE) -C \$(SRC_NAME) clean
+
+          romfs:
+          	# v2.0.11 編譯後的檔案直接在目錄下，不在 static/ 子目錄中
+          	\$(ROMFSINST) \$(SRC_NAME)/ebtables /bin/ebtables
+          	\$(ROMFSINST) \$(SRC_NAME)/ethertypes /etc_ro/ethertypes
+          EOF
+          
+          # 微調原始碼內的 Makefile (確保它接受我們的 LDFLAGS)
+          # 雖然我們在外層傳了，但有時內部 Makefile 會覆蓋，這裡保險起見把 -static 加進 CFLAGS
+          sed -i 's/CFLAGS:=-O2/CFLAGS:=-O2 -static/g' "$EBT_DIR/$EBT_VER/Makefile"
+
+          echo "✅ Ebtables upgraded to $EBT_VER (Static fix applied)"
 
           # ========================================
           # 2. 新增 Arptables v0.0.5
           # ========================================
           ARP_VER="arptables-v0.0.5"
-          # 注意：官網 tarball 解壓後目錄名稱通常不帶 v，這裡為了安全我們手動建立目錄
           ARP_DIR="$USER_DIR/arptables"
           
           if [ ! -d "$ARP_DIR" ]; then
             echo "🆕 Creating arptables directory..."
             mkdir -p "$ARP_DIR"
-            
-            # 下載源碼
             wget -qO- "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" | tar -xz -C "$ARP_DIR" --strip-components=1
             
-            # 建立 Padavan 專用的 Makefile
-            # Padavan 需要一個外層 Makefile 來呼叫源碼內的編譯
+            # 建立 Padavan 專用的 Makefile (Arptables)
             cat << 'EOF' > "$ARP_DIR/Makefile"
           SRC_NAME=.
           all:
@@ -366,43 +379,37 @@ jobs:
           	$(MAKE) -C $(SRC_NAME) clean
           EOF
           
-            # 將 arptables 加入全域編譯列表 (user/Makefile)
-            # 我們把它加在 ebtables 後面
+            # 將 arptables 加入全域編譯列表
             if grep -q "ebtables" "$USER_DIR/Makefile"; then
-               sed -i '/dir_y += ebtables/a dir_y += arptables' "$USER_DIR/Makefile"
+               # 如果尚未加入 arptables，則加入
+               if ! grep -q "arptables" "$USER_DIR/Makefile"; then
+                   sed -i '/dir_y += ebtables/a dir_y += arptables' "$USER_DIR/Makefile"
+               fi
             else
                echo "dir_y += arptables" >> "$USER_DIR/Makefile"
             fi
-            
             echo "✅ Arptables added to build tree."
           else
             echo "⚠️ Arptables directory already exists."
           fi
           
           # ========================================
-          # 3. 核心支援 (Kernel Config) - 關鍵！
+          # 3. 核心支援 (Kernel Config)
           # ========================================
-          # Arptables 需要核心開啟 CONFIG_IP_NF_ARPTABLES
-          # 我們嘗試修改當前的核心設定檔 (如果有生成的話)
-          
-          KERNEL_CONFIG="padavan-ng/trunk/.config" # 有時是 .config 有時是 kernel config，視階段而定
-          # 為了保險，我們直接修改 Templates 裡面的 kernel config (針對你的機型)
-          # 或者直接修改 trunk/linux-3.4.x/.config (如果已經生成)
-          
+          # 確保核心支援 Arptables
           TARGET_KCONF="padavan-ng/trunk/linux-3.4.x/.config"
           
           if [ -f "$TARGET_KCONF" ]; then
              echo "🔧 Enabling Kernel modules for Arptables..."
+             # 替換或新增配置
              sed -i 's/# CONFIG_IP_NF_ARPTABLES is not set/CONFIG_IP_NF_ARPTABLES=m/g' "$TARGET_KCONF"
              sed -i 's/# CONFIG_IP_NF_ARPFILTER is not set/CONFIG_IP_NF_ARPFILTER=m/g' "$TARGET_KCONF"
              sed -i 's/# CONFIG_IP_NF_ARP_MANGLE is not set/CONFIG_IP_NF_ARP_MANGLE=m/g' "$TARGET_KCONF"
              
-             # 如果找不到這些行 (可能原本就沒有)，則手動追加
-             if ! grep -q "CONFIG_IP_NF_ARPTABLES" "$TARGET_KCONF"; then
-                echo "CONFIG_IP_NF_ARPTABLES=m" >> "$TARGET_KCONF"
-                echo "CONFIG_IP_NF_ARPFILTER=m" >> "$TARGET_KCONF"
-                echo "CONFIG_IP_NF_ARP_MANGLE=m" >> "$TARGET_KCONF"
-             fi
+             # 雙重保險：如果 sed 沒找到（因為不存在），則追加
+             grep -q "CONFIG_IP_NF_ARPTABLES" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPTABLES=m" >> "$TARGET_KCONF"
+             grep -q "CONFIG_IP_NF_ARPFILTER" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPFILTER=m" >> "$TARGET_KCONF"
+             grep -q "CONFIG_IP_NF_ARP_MANGLE" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARP_MANGLE=m" >> "$TARGET_KCONF"
           fi
           
           echo "::endgroup::"

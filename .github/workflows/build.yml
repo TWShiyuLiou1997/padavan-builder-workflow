@@ -308,27 +308,35 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (修正版)
+      # 7.6 [網路工具增強] 升級 ebtables & 新增 arptables (路徑結構修正版)
       - name: 🔥 Network Tools Upgrade (ebtables & arptables)
         run: |
           echo "::group::Ebtables Upgrade & Arptables Addon"
           USER_DIR="padavan-ng/trunk/user"
           
           # ========================================
-          # 1. 升級 Ebtables 到 2.0.11 (Fix Static Build)
+          # 1. 升級 Ebtables 到 2.0.11
           # ========================================
-          EBT_DIR="$USER_DIR/ebtables"
           EBT_VER="ebtables-2.0.11"
+          # 定義我們"想要"的源碼放置路徑 (明確指定，不依賴 tar 包內名稱)
+          EBT_ROOT="$USER_DIR/ebtables"
+          EBT_SRC_DIR="$EBT_ROOT/$EBT_VER"
           EBT_URL="https://www.netfilter.org/pub/ebtables/$EBT_VER.tar.gz"
           
-          echo "⬇️ Downloading $EBT_VER..."
-          rm -rf "$EBT_DIR/$EBT_VER" # 清除舊嘗試
-          wget -qP "$EBT_DIR" "$EBT_URL"
-          tar -xf "$EBT_DIR/$EBT_VER.tar.gz" -C "$EBT_DIR"
+          echo "⬇️ Setup Ebtables $EBT_VER structure..."
+          
+          # 1. 準備目錄：先建立存放源碼的子目錄
+          rm -rf "$EBT_SRC_DIR"
+          mkdir -p "$EBT_SRC_DIR"
+          
+          # 2. 下載並解壓：使用 --strip-components=1 去掉 tar 包裡的第一層目錄
+          # 這樣源碼檔案會直接進入 $EBT_SRC_DIR，不會多一層莫名其妙的資料夾
+          wget -qO- "$EBT_URL" | tar -xz -C "$EBT_SRC_DIR" --strip-components=1
           
           echo "🔧 Rewriting ebtables wrapper Makefile..."
-          # 直接重寫外層 Makefile，確保參數正確，不使用舊的 static target
-          cat << EOF > "$EBT_DIR/Makefile"
+          # 3. 建立外層 Wrapper Makefile
+          # 注意：SRC_NAME 對應我們上面建立的目錄名
+          cat << EOF > "$EBT_ROOT/Makefile"
           SRC_NAME=$EBT_VER
 
           all:
@@ -344,44 +352,51 @@ jobs:
           	\$(MAKE) -C \$(SRC_NAME) clean
 
           romfs:
-          	# v2.0.11 編譯後的檔案直接在目錄下，不在 static/ 子目錄中
+          	# v2.0.11 編譯後的檔案直接在源碼根目錄下
           	\$(ROMFSINST) \$(SRC_NAME)/ebtables /bin/ebtables
           	\$(ROMFSINST) \$(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
-          # 微調原始碼內的 Makefile (確保它接受我們的 LDFLAGS)
-          # 雖然我們在外層傳了，但有時內部 Makefile 會覆蓋，這裡保險起見把 -static 加進 CFLAGS
-          sed -i 's/CFLAGS:=-O2/CFLAGS:=-O2 -static/g' "$EBT_DIR/$EBT_VER/Makefile"
-
-          echo "✅ Ebtables upgraded to $EBT_VER (Static fix applied)"
+          # 4. 修改內層 Makefile (這步現在一定找得到檔案了)
+          if [ -f "$EBT_SRC_DIR/Makefile" ]; then
+             sed -i 's/CFLAGS:=-O2/CFLAGS:=-O2 -static/g' "$EBT_SRC_DIR/Makefile"
+             echo "✅ Ebtables source prepared and patched."
+          else
+             echo "❌ Error: Ebtables Makefile not found at $EBT_SRC_DIR/Makefile"
+             exit 1
+          fi
 
           # ========================================
           # 2. 新增 Arptables v0.0.5
           # ========================================
           ARP_VER="arptables-v0.0.5"
-          ARP_DIR="$USER_DIR/arptables"
+          ARP_ROOT="$USER_DIR/arptables"
+          # 為了結構統一，我們也把 arptables 源碼放在子目錄中
+          ARP_SRC_DIR="$ARP_ROOT/$ARP_VER"
           
-          if [ ! -d "$ARP_DIR" ]; then
-            echo "🆕 Creating arptables directory..."
-            mkdir -p "$ARP_DIR"
-            wget -qO- "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" | tar -xz -C "$ARP_DIR" --strip-components=1
+          if [ ! -d "$ARP_ROOT" ]; then
+            echo "🆕 Setting up Arptables..."
+            mkdir -p "$ARP_SRC_DIR"
             
-            # 建立 Padavan 專用的 Makefile (Arptables)
-            cat << 'EOF' > "$ARP_DIR/Makefile"
-          SRC_NAME=.
+            # 下載並剝離第一層目錄
+            wget -qO- "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" | tar -xz -C "$ARP_SRC_DIR" --strip-components=1
+            
+            # 建立 Padavan 專用的外層 Makefile
+            # 注意：SRC_NAME 指向子目錄
+            cat << EOF > "$ARP_ROOT/Makefile"
+          SRC_NAME=$ARP_VER
           all:
-          	$(MAKE) -C $(SRC_NAME) CC="$(CC)" AR="$(AR)" KERNEL_DIR=$(KERNEL_HEADERS_PATH) userspace
+          	\$(MAKE) -C \$(SRC_NAME) CC="\$(CC)" AR="\$(AR)" KERNEL_DIR=\$(KERNEL_HEADERS_PATH) userspace
           
           romfs:
-          	$(ROMFSINST) $(SRC_NAME)/arptables /bin/arptables
+          	\$(ROMFSINST) \$(SRC_NAME)/arptables /bin/arptables
           
           clean:
-          	$(MAKE) -C $(SRC_NAME) clean
+          	\$(MAKE) -C \$(SRC_NAME) clean
           EOF
           
             # 將 arptables 加入全域編譯列表
             if grep -q "ebtables" "$USER_DIR/Makefile"; then
-               # 如果尚未加入 arptables，則加入
                if ! grep -q "arptables" "$USER_DIR/Makefile"; then
                    sed -i '/dir_y += ebtables/a dir_y += arptables' "$USER_DIR/Makefile"
                fi
@@ -396,17 +411,14 @@ jobs:
           # ========================================
           # 3. 核心支援 (Kernel Config)
           # ========================================
-          # 確保核心支援 Arptables
           TARGET_KCONF="padavan-ng/trunk/linux-3.4.x/.config"
           
           if [ -f "$TARGET_KCONF" ]; then
              echo "🔧 Enabling Kernel modules for Arptables..."
-             # 替換或新增配置
              sed -i 's/# CONFIG_IP_NF_ARPTABLES is not set/CONFIG_IP_NF_ARPTABLES=m/g' "$TARGET_KCONF"
              sed -i 's/# CONFIG_IP_NF_ARPFILTER is not set/CONFIG_IP_NF_ARPFILTER=m/g' "$TARGET_KCONF"
              sed -i 's/# CONFIG_IP_NF_ARP_MANGLE is not set/CONFIG_IP_NF_ARP_MANGLE=m/g' "$TARGET_KCONF"
              
-             # 雙重保險：如果 sed 沒找到（因為不存在），則追加
              grep -q "CONFIG_IP_NF_ARPTABLES" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPTABLES=m" >> "$TARGET_KCONF"
              grep -q "CONFIG_IP_NF_ARPFILTER" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPFILTER=m" >> "$TARGET_KCONF"
              grep -q "CONFIG_IP_NF_ARP_MANGLE" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARP_MANGLE=m" >> "$TARGET_KCONF"

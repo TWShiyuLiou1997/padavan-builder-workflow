@@ -237,6 +237,78 @@ jobs:
             sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
           fi
 
+      # 7.5. [安靜模式] 升級 iptables 1.8.11 並屏蔽警告
+      - name: 🔥 Auto Upgrade iptables 1.8.11 & Patch
+        run: |
+          echo "::group::Iptables Upgrade & Patching"
+          # 定義新版本資訊
+          NEW_VER="1.8.11"
+          NEW_HASH="0585f92271df0515152a5146c823fc195724588e1467406a03c3917417e8c057"
+          
+          # 1. 找到 iptables 的 Makefile
+          IPT_MAKEFILE=$(find padavan-ng/trunk/user/iptables -name Makefile | head -n 1)
+          IPT_DIR=$(dirname "$IPT_MAKEFILE")
+          echo "✅ 鎖定 Makefile: $IPT_MAKEFILE"
+          
+          # 2. 修改版本號與 Hash
+          sed -i "s/1\.8\.10/$NEW_VER/g" "$IPT_MAKEFILE"
+          # 強力替換 Hash (覆蓋各種可能的變數名稱)
+          if grep -q "PKG_HASH" "$IPT_MAKEFILE"; then
+              sed -i "s/^PKG_HASH:=.*/PKG_HASH:=$NEW_HASH/" "$IPT_MAKEFILE"
+          else
+              sed -i "s/^PKG_MD5SUM:=.*/PKG_HASH:=$NEW_HASH/" "$IPT_MAKEFILE"
+          fi
+          echo "🆙 版本已升級至 $NEW_VER"
+
+          # 3. 生成補丁檔 (放在 iptables 目錄下)
+          cat << 'EOF' > "$IPT_DIR/999-suppress-warnings.patch"
+          --- a/libxtables/xtables.c
+          +++ b/libxtables/xtables.c
+          @@ -809,9 +809,11 @@
+           		dptr = &((*dptr)->next);
+           	}
+           
+          +#if 0
+           	if (seen && !found)
+           		fprintf(stderr,
+           			"Warning: Extension %s is not supported, missing kernel module?\n",
+           			name);
+          +#endif
+           
+           	for (ptr = xtables_matches; ptr; ptr = ptr->next) {
+          @@ -939,9 +941,11 @@
+           		dptr = &((*dptr)->next);
+           	}
+           
+          +#if 0
+           	if (seen && !found)
+           		fprintf(stderr,
+           			"Warning: Extension %s is not supported, missing kernel module?\n",
+           			name);
+          +#endif
+           
+           	for (ptr = xtables_targets; ptr; ptr = ptr->next) {
+          EOF
+          echo "🛡️ 補丁已建立於: $IPT_DIR/999-suppress-warnings.patch"
+
+          # 4. 關鍵一步：修改 Makefile 以應用補丁
+          # 邏輯：找到 "tar xf" (解壓) 的指令，在其後方追加 "&& patch ..."
+          # 這樣可以確保源碼解壓後，立刻被打上補丁，然後才開始編譯
+          if grep -q "tar " "$IPT_MAKEFILE"; then
+              # 備份原始 Makefile
+              cp "$IPT_MAKEFILE" "$IPT_MAKEFILE.bak"
+              
+              # 在 tar 解壓命令後加上 patch 指令
+              # 注意：這裡假設 Makefile 使用 $(SRC_NAME) 作為目錄名，這是標準做法
+              sed -i 's|tar -xf $(SRC_NAME).tar.xz|tar -xf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch|' "$IPT_MAKEFILE"
+              sed -i 's|tar xf $(SRC_NAME).tar.xz|tar xf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch|' "$IPT_MAKEFILE"
+              
+              echo "✅ Makefile 已修改，將在解壓時自動應用補丁。"
+          else
+              echo "⚠️ 警告：無法在 Makefile 中找到解壓指令，補丁可能無法應用！"
+          fi
+          echo "::endgroup::"
+
       # 8. 開始編譯
       - name: Build firmware
         run: |
@@ -252,7 +324,7 @@ jobs:
           ./build_firmware.sh 2>&1 | tee build.log
           echo "::endgroup::"
 
-      # 9. 智慧打包與產物偵測 (FIXED: Moved Size Check Here)
+      # 9. 智慧打包與產物偵測 (含 iptables Debug 檔案)
       - name: Smart-Pack & Debug Collection
         run: |
           echo "::group::Smart Packing"
@@ -278,7 +350,31 @@ jobs:
           [ -f "padavan-ng/trunk/user/www/dict/CN.dict" ] && cp "padavan-ng/trunk/user/www/dict/CN.dict" "$PACK_DIR/CN.dict.txt"
           [ -f "padavan-ng/trunk/linux-3.4.x/.config" ] && cp "padavan-ng/trunk/linux-3.4.x/.config" "$PACK_DIR/kernel.config"
           [ -f "padavan-ng/trunk/build.log" ] && cp "padavan-ng/trunk/build.log" "$PACK_DIR/build.log"
+
+          # =======================================================
+          # 🔥 新增：收集 iptables 修改後的源碼與補丁 (供驗證用)
+          # =======================================================
+          IPT_SRC_DIR="padavan-ng/trunk/user/iptables/iptables-1.8.11"
+          IPT_BASE_DIR="padavan-ng/trunk/user/iptables"
           
+          mkdir -p "$PACK_DIR/debug_iptables"
+          
+          # 1. 複製生成的 patch
+          if [ -f "$IPT_BASE_DIR/999-suppress-warnings.patch" ]; then
+              cp "$IPT_BASE_DIR/999-suppress-warnings.patch" "$PACK_DIR/debug_iptables/"
+              echo "- 🛡️ **Patch**: Included in debug_iptables" >> "$REPORT_FILE"
+          fi
+          
+          # 2. 複製編譯後實際的 xtables.c (驗證是否被修改)
+          # 注意：此文件只有在編譯成功後才會存在
+          if [ -f "$IPT_SRC_DIR/libxtables/xtables.c" ]; then
+              cp "$IPT_SRC_DIR/libxtables/xtables.c" "$PACK_DIR/debug_iptables/xtables_patched.c"
+              echo "- 📄 **Source**: xtables.c (patched) included" >> "$REPORT_FILE"
+          else
+               echo "⚠️ Warning: xtables.c not found (Maybe build failed or path differs)"
+          fi
+          # =======================================================
+
           # 3. 抓取韌體產物並立即檢查大小
           if [ -d "$IMAGES_DIR" ]; then
             echo "Scanning $IMAGES_DIR for images..."

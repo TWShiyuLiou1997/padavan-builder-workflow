@@ -308,20 +308,20 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具] Ebtables & Arptables (v19 Full Debug & Robust Config)
-      - name: 🔥 Network Tools Upgrade (Full Debug Mode)
+      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables (v24 強化穩定版)
+      - name: 🔥 Network Tools (Smart Compile & Robust Kernel Config)
         run: |
-          echo "::group::Network Tools Upgrade (Debug Mode)"
+          echo "::group::Smart Compile Network Tools"
           
+          # === 設定路徑 ===
           BASE_DIR="$GITHUB_WORKSPACE/padavan-ng/trunk/user"
           EBT_ROOT="$BASE_DIR/ebtables"
           ARP_ROOT="$BASE_DIR/arptables"
           
-          # =========================================================
-          # 1. Ebtables v2.0.11 (Debug & Auto-Install)
-          # =========================================================
+          # ========================================
+          # 1. Ebtables v2.0.11 (基於成功版強化)
+          # ========================================
           echo "⬇️ Upgrading Ebtables to v2.0.11..."
-          
           rm -rf "$EBT_ROOT"
           mkdir -p "$EBT_ROOT"
           cd "$EBT_ROOT" || exit 1
@@ -331,8 +331,7 @@ jobs:
           rm -f src.tar.gz
           mv ebtables-2.0.11 src
           
-          echo "🔧 Creating Ebtables Wrapper..."
-          
+          echo "🔧 Creating Ebtables Wrapper Makefile..."
           cat << 'EOF' > Makefile
           SRC_NAME = src
           CC ?= gcc
@@ -346,14 +345,15 @@ jobs:
                           --disable-shared \
                           --enable-static \
                           CFLAGS="$(CFLAGS) -static" \
-                          LDFLAGS="$(LDFLAGS) -static -all-static"
+                          LDFLAGS="$(LDFLAGS) -static"
           
           all:
+          	@echo "👉 [Ebtables] Checking configuration..."
           	@if [ ! -f $(SRC_NAME)/Makefile ]; then \
-          		echo "👉 [Ebtables] Configuring..."; \
+          		echo "👉 [Ebtables] Running configure..."; \
           		(cd $(SRC_NAME) && $(CONFIGURE_CMD)); \
           	fi
-          	@echo "👉 [Ebtables] Building..."; \
+          	@echo "👉 [Ebtables] Building static binary..."
           	$(MAKE) -C $(SRC_NAME) all
           	@echo "========================================"
           	@echo "🔎 DEBUG: Listing compiled files in $(SRC_NAME):"
@@ -375,20 +375,16 @@ jobs:
           		echo "   ✅ Found 'static', installing..."; \
           		$(ROMFSINST) $(SRC_NAME)/static /bin/ebtables; \
           	else \
-          		echo "❌ Error: Could not find binary! Listing directory for debug:"; \
-          		ls -F $(SRC_NAME)/; \
-          		exit 1; \
+          		echo "❌ Error: Could not find Ebtables binary! Listing for debug:"; \
+          		ls -F $(SRC_NAME)/; exit 1; \
           	fi
           	$(ROMFSINST) $(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
-          echo "✅ Ebtables prepared."
-          
-          # =========================================================
-          # 2. Arptables v0.0.5 (Debug & Auto-Install)
-          # =========================================================
+          # ========================================
+          # 2. Arptables v0.0.5 (基於成功版強化)
+          # ========================================
           echo "⬇️ Processing Arptables..."
-          
           mkdir -p "$ARP_ROOT"
           cd "$ARP_ROOT" || exit 1
           
@@ -396,64 +392,67 @@ jobs:
             wget --no-check-certificate "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" -O src.tar.gz
             tar -xf src.tar.gz
             rm -f src.tar.gz
-            mv arptables-v0.0.5 src 2>/dev/null || mv arptables-0.0.5 src
-            
-            # 使用您驗證成功的 Arptables Wrapper，並加入 Debug
+            ARP_SRC_NAME=$(ls -d arptables-0*/ | head -n 1 | sed 's/\///')
+            mv "$ARP_SRC_NAME" src
+            chmod -R u+w src
+          
+            echo "🔧 Creating Arptables Wrapper Makefile..."
             cat << EOF > Makefile
-          SRC_NAME=src
+          SRC_NAME = src
           all:
-          	\$(MAKE) -C \$(SRC_NAME) CC="\$(CC)" AR="\$(AR)" KERNEL_DIR=\$(KERNEL_HEADERS_PATH) COPT_FLAGS="-Os -static" LDFLAGS="-static" arptables-legacy
+          	\$(MAKE) -C \$(SRC_NAME) \
+          		CC="\$(CC)" \
+          		AR="\$(AR)" \
+          		KERNEL_DIR=\$(KERNEL_HEADERS_PATH) \
+          		COPT_FLAGS="-Os -static" \
+          		LDFLAGS="-static" \
+          		arptables-legacy
           	@echo "========================================"
           	@echo "🔎 DEBUG: Listing compiled files in \$(SRC_NAME):"
           	@ls -l \$(SRC_NAME)/arptables* 2>/dev/null || ls -l \$(SRC_NAME)/
           	@echo "========================================"
           
           romfs:
-          	\$(ROMFSINST) \$(SRC_NAME)/arptables-legacy /bin/arptables
+          	@echo "👉 [Arptables] Installing to ROMFS..."
+          	@if [ -f \$(SRC_NAME)/arptables-legacy ]; then \
+          		echo "   ✅ Found 'arptables-legacy', installing..."; \
+          		\$(ROMFSINST) \$(SRC_NAME)/arptables-legacy /bin/arptables; \
+          	elif [ -f \$(SRC_NAME)/arptables ]; then \
+          		echo "   ✅ Found 'arptables', installing..."; \
+          		\$(ROMFSINST) \$(SRC_NAME)/arptables /bin/arptables; \
+          	else \
+          		echo "❌ Error: Could not find Arptables binary! Listing for debug:"; \
+          		ls -F \$(SRC_NAME)/; exit 1; \
+          	fi
           
           clean:
           	\$(MAKE) -C \$(SRC_NAME) clean
           EOF
           
             cd "$BASE_DIR" || exit 1
-            if grep -q "ebtables" Makefile; then
-               if ! grep -q "arptables" Makefile; then
-                   sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile
-               fi
-            else
-               grep -q "arptables" Makefile || echo "dir_y += arptables" >> Makefile
+            if ! grep -q "dir_y += arptables" Makefile; then
+                sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile 2>/dev/null || echo "dir_y += arptables" >> Makefile
             fi
           fi
           
-          # =========================================================
-          # 3. Kernel Config (全面補全 & 嚴謹處理)
-          # =========================================================
-          echo "🔧 Configuring Kernel Modules (Force Module Mode =m)..."
-          cd "$GITHUB_WORKSPACE/padavan-ng/trunk/linux-3.4.x"
+          # ========================================
+          # 3. 核心支援 (究極嚴謹 Kernel Config)
+          # ========================================
+          echo "🔧 Deep-Cleaning & Enabling Kernel modules..."
+          cd "$GITHUB_WORKSPACE"
+          TARGET_KCONF="padavan-ng/trunk/linux-3.4.x/.config"
           
-          if [ -f ".config" ]; then
-             # 定義需要開啟的模組清單
-             MODULES="CONFIG_IP_NF_ARPTABLES \
-                      CONFIG_IP_NF_ARPFILTER \
-                      CONFIG_IP_NF_ARP_MANGLE \
-                      CONFIG_NF_LOG_ARP \
-                      CONFIG_BRIDGE_EBT_ARP \
-                      CONFIG_BRIDGE_EBT_ARPREPLY"
-             
+          if [ -f "$TARGET_KCONF" ]; then
+             MODULES="CONFIG_IP_NF_ARPTABLES CONFIG_IP_NF_ARPFILTER CONFIG_IP_NF_ARP_MANGLE CONFIG_NF_LOG_ARP CONFIG_BRIDGE_EBT_ARP CONFIG_BRIDGE_EBT_ARPREPLY"
              for mod in $MODULES; do
-                 # 1. 處理 # CONFIG_XXX is not set 的情況
-                 if grep -q "# $mod is not set" .config; then
-                     sed -i "s/^# $mod is not set/$mod=m/" .config
-                     echo "   ✅ Enabled $mod=m (was not set)"
-                 # 2. 處理已經存在的情況 (可能是 =y 或其他)
-                 elif grep -q "^$mod=" .config; then
-                     sed -i "s/^$mod=.*/$mod=m/" .config
-                     echo "   ✅ Updated $mod=m"
-                 # 3. 處理完全不存在的情況
-                 else
-                     echo "$mod=m" >> .config
-                     echo "   ✅ Added $mod=m"
-                 fi
+                if grep -q "$mod" "$TARGET_KCONF"; then
+                   # 處理所有註解變體，強行替換整行為 =m
+                   sed -i "s|^.*$mod.*$|$mod=m|" "$TARGET_KCONF"
+                   echo "   ✅ Forced $mod=m (Updated)"
+                else
+                   echo "$mod=m" >> "$TARGET_KCONF"
+                   echo "   ✅ Forced $mod=m (Added)"
+                fi
              done
           fi
           

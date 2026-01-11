@@ -320,83 +320,17 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables
-      - name: 🔥 Network Tools (Smart Compile Ebtables & Arptables)
+      # 7.6 [網路工具] 智慧編譯 新增 Arptables
+      - name: 🔥 Network Tools (Smart Compile Arptables)
         run: |
           echo "::group::Smart Compile Network Tools"
           
           # === 設定路徑 ===
           BASE_DIR="$GITHUB_WORKSPACE/padavan-ng/trunk/user"
-          EBT_ROOT="$BASE_DIR/ebtables"
           ARP_ROOT="$BASE_DIR/arptables"
           
           # ========================================
-          # 1. Ebtables v2.0.11 (關鍵修正：強制引用 Kernel Headers)
-          # ========================================
-          echo "⬇️ Upgrading Ebtables to v2.0.11 (Linking Kernel Headers)..."
-          
-          rm -rf "$EBT_ROOT"
-          mkdir -p "$EBT_ROOT"
-          cd "$EBT_ROOT" || exit 1
-          
-          wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
-          tar -xf src.tar.gz && rm -f src.tar.gz
-          mv ebtables-2.0.11 src
-          
-          echo "🔧 Creating Ebtables Wrapper Makefile..."
-          
-          # [Makefile 解說]
-          # 1. KERNEL_DIR: 自動往上兩層找 linux-3.4.x 或 linux-4.4.x
-          # 2. MY_CFLAGS: 加入 -I$(KERNEL_DIR)/include/uapi 和 -I$(KERNEL_DIR)/include
-          #    這能確保 ebtables 看到和核心一模一樣的資料結構！
-          cat << 'EOF' > Makefile
-          SRC_NAME = src
-          CC ?= gcc
-          
-          # 自動偵測 Kernel 路徑 (在 trunk/user/ebtables 執行時，核心在 ../../linux-x.x.x)
-          KERNEL_DIR = $(shell ls -d ../../linux-4.4.x 2>/dev/null || ls -d ../../linux-3.4.x)
-          
-          # ⚠️ 關鍵：引用核心標頭，防止 Struct 大小不一致導致 Segfault
-          K_INC = -I$(KERNEL_DIR)/include -I$(KERNEL_DIR)/include/uapi
-          
-          # 參數：-O2 (標準優化), -static (靜態), K_INC (核心標頭)
-          MY_CFLAGS = -O2 -static -Wall $(K_INC)
-          MY_LDFLAGS = -static
-          
-          CONFIGURE_CMD = ./configure \
-                          --host=mipsel-linux \
-                          --prefix=/usr \
-                          --sbindir=/sbin \
-                          --disable-shared \
-                          --enable-static \
-                          CFLAGS="$(MY_CFLAGS)" \
-                          LDFLAGS="$(MY_LDFLAGS)"
-
-          all:
-          	@echo "👉 [Ebtables] Found Kernel at: $(KERNEL_DIR)"
-          	@echo "👉 [Ebtables] CFLAGS: $(MY_CFLAGS)"
-          	@if [ ! -f $(SRC_NAME)/Makefile ]; then \
-          		(cd $(SRC_NAME) && $(CONFIGURE_CMD)); \
-          	fi
-          	$(MAKE) -C $(SRC_NAME) all
-          
-          clean:
-          	@if [ -f $(SRC_NAME)/Makefile ]; then $(MAKE) -C $(SRC_NAME) clean; fi
-          
-          romfs:
-          	@echo "👉 [Ebtables] Installing to ROMFS..."
-          	# 確保二進位檔存在 (v2.0.11 編譯出來通常叫 ebtables-legacy)
-          	$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables
-          	
-          	# ⚠️ 絕對不能漏掉這個！
-          	# Ebtables 如果找不到 ethertypes 對照表，某些版本也會直接 Segfault
-          	$(ROMFSINST) $(SRC_NAME)/ethertypes /etc_ro/ethertypes
-          EOF
-          
-          echo "✅ Ebtables v2.0.11 setup complete."
-          
-          # ========================================
-          # 2. 新增 Arptables v0.0.5
+          # 1. 新增 Arptables v0.0.5
           # ========================================
           echo "⬇️ Processing Arptables..."
           
@@ -464,7 +398,7 @@ jobs:
           fi
 
           # ========================================
-          # 3. 核心支援 (究極嚴謹 Kernel Config)
+          # 2. 核心支援 (究極嚴謹 Kernel Config)
           # ========================================
           echo "🔧 Deep-Cleaning & Enabling Kernel modules..."
           cd "$GITHUB_WORKSPACE"

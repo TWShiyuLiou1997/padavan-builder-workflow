@@ -374,8 +374,8 @@ jobs:
           
           romfs:
           	@echo "👉 [Wrapper] Installing to ROMFS..."
-          	# v2.0.11 編譯完成後，靜態檔案通常直接叫 ebtables
-          	@if [ -f $(SRC_NAME)/ebtables ]; then \
+          	# v2.0.11 編譯完成後，靜態檔案通常直接叫 ebtables-legacy
+          	@if [ -f $(SRC_NAME)/ebtables-legacy ]; then \
           		$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables; \
           		echo "   ✅ Installed binary: /bin/ebtables"; \
           	else \

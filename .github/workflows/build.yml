@@ -331,40 +331,38 @@ jobs:
           ARP_ROOT="$BASE_DIR/arptables"
           
           # ========================================
-          # 1. Ebtables v2.0.11 (Anti-Segfault: O2 + Static)
+          # 1. Ebtables v2.0.11 (關鍵修正：強制引用 Kernel Headers)
           # ========================================
-          echo "⬇️ Upgrading Ebtables to v2.0.11 (Fixing Segfault)..."
+          echo "⬇️ Upgrading Ebtables to v2.0.11 (Linking Kernel Headers)..."
           
-          # 清理並重建目錄
           rm -rf "$EBT_ROOT"
           mkdir -p "$EBT_ROOT"
           cd "$EBT_ROOT" || exit 1
           
-          # 下載 v2.0.11
           wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
-          tar -xf src.tar.gz
-          rm -f src.tar.gz
+          tar -xf src.tar.gz && rm -f src.tar.gz
           mv ebtables-2.0.11 src
           
-          echo "🔧 Creating Translation Layer (Wrapper Makefile)..."
+          echo "🔧 Creating Ebtables Wrapper Makefile..."
           
-          # [修正版 Makefile] 
-          # 1. 改用 -O2 防止 MIPS 指令錯亂
-          # 2. 移除 ?= 讓它無視外部變數，強制生效
+          # [Makefile 解說]
+          # 1. KERNEL_DIR: 自動往上兩層找 linux-3.4.x 或 linux-4.4.x
+          # 2. MY_CFLAGS: 加入 -I$(KERNEL_DIR)/include/uapi 和 -I$(KERNEL_DIR)/include
+          #    這能確保 ebtables 看到和核心一模一樣的資料結構！
           cat << 'EOF' > Makefile
           SRC_NAME = src
-          
-          # 繼承 Padavan 編譯器 (cc/gcc)
           CC ?= gcc
           
-          # ⚠️ 關鍵修正：強制使用 -O2，絕對不要用 -Os
-          # -static: 確保不依賴外部動態庫 (減少相容性問題)
-          # -Wall: 顯示更多警告以便除錯
-          MY_CFLAGS = -O2 -static -Wall
+          # 自動偵測 Kernel 路徑 (在 trunk/user/ebtables 執行時，核心在 ../../linux-x.x.x)
+          KERNEL_DIR = $(shell ls -d ../../linux-4.4.x 2>/dev/null || ls -d ../../linux-3.4.x)
+          
+          # ⚠️ 關鍵：引用核心標頭，防止 Struct 大小不一致導致 Segfault
+          K_INC = -I$(KERNEL_DIR)/include -I$(KERNEL_DIR)/include/uapi
+          
+          # 參數：-O2 (標準優化), -static (靜態), K_INC (核心標頭)
+          MY_CFLAGS = -O2 -static -Wall $(K_INC)
           MY_LDFLAGS = -static
           
-          # 設定 configure
-          # 注意：這裡直接將 CFLAGS 寫死傳入，確保 configure 收到正確參數
           CONFIGURE_CMD = ./configure \
                           --host=mipsel-linux \
                           --prefix=/usr \
@@ -373,20 +371,17 @@ jobs:
                           --enable-static \
                           CFLAGS="$(MY_CFLAGS)" \
                           LDFLAGS="$(MY_LDFLAGS)"
-          
+
           all:
-          	@echo "👉 [Wrapper] Checking configuration (Force O2)..."
+          	@echo "👉 [Ebtables] Found Kernel at: $(KERNEL_DIR)"
+          	@echo "👉 [Ebtables] CFLAGS: $(MY_CFLAGS)"
           	@if [ ! -f $(SRC_NAME)/Makefile ]; then \
-          		echo "👉 [Wrapper] Running configure..."; \
           		(cd $(SRC_NAME) && $(CONFIGURE_CMD)); \
           	fi
-          	@echo "👉 [Wrapper] Building static binary..."
           	$(MAKE) -C $(SRC_NAME) all
           
           clean:
-          	@if [ -f $(SRC_NAME)/Makefile ]; then \
-          		$(MAKE) -C $(SRC_NAME) clean; \
-          	fi
+          	@if [ -f $(SRC_NAME)/Makefile ]; then $(MAKE) -C $(SRC_NAME) clean; fi
           
           romfs:
           	@echo "👉 [Ebtables] Installing to ROMFS..."

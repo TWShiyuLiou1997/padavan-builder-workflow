@@ -308,46 +308,47 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具] Ebtables v2.0.11 (Legacy Fix) & Arptables v0.0.5 (Proven Logic)
-      - name: 🔥 Network Tools (Ultimate Fix)
+      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables
+      - name: 🔥 Network Tools (Smart Compile Ebtables & Arptables)
         run: |
-          echo "::group::Network Tools Upgrade"
+          echo "::group::Smart Compile Network Tools"
           
-          # === 設定全域路徑 ===
+          # === 設定路徑 ===
           BASE_DIR="$GITHUB_WORKSPACE/padavan-ng/trunk/user"
           EBT_ROOT="$BASE_DIR/ebtables"
           ARP_ROOT="$BASE_DIR/arptables"
           
-          # =========================================================
-          # 1. Ebtables v2.0.11 
-          # 策略：使用「智慧編譯」的 configure 邏輯，但在 romfs 抓取 legacy 檔名
-          # =========================================================
+          # ========================================
+          # 1. Ebtables v2.0.11 (Autotools 轉接 Padavan)
+          # ========================================
           echo "⬇️ Upgrading Ebtables to v2.0.11..."
           
-          # 重置目錄
+          # 清理並重建目錄
           rm -rf "$EBT_ROOT"
           mkdir -p "$EBT_ROOT"
           cd "$EBT_ROOT" || exit 1
           
-          # 下載並解壓
+          # 下載 v2.0.11 (新版架構)
           wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
           tar -xf src.tar.gz
           rm -f src.tar.gz
           mv ebtables-2.0.11 src
           
-          echo "🔧 Creating Ebtables Wrapper (Autotools -> Padavan)..."
+          echo "🔧 Creating Translation Layer (Wrapper Makefile)..."
           
-          # [Ebtables Makefile] 
-          # 結合：編譯用 Autotools，安裝時抓 ebtables-legacy
+          # [翻譯官 Makefile]
+          # 這是關鍵：它把 Padavan 的指令轉換為 OpenWrt 式的 configure && make
           cat << 'EOF' > Makefile
           SRC_NAME = src
           
-          # 繼承編譯參數
+          # 繼承 Padavan 的編譯器設定
           CC ?= gcc
           CFLAGS ?= -O2
           LDFLAGS ?= -s
           
-          # Configure 指令 (模擬 OpenWrt 靜態編譯)
+          # 這是模擬 OpenWrt 的配置指令
+          # --host=mipsel-linux: 告訴它我們要跑在 MIPS 路由上
+          # --enable-static: 關鍵！編譯成單一檔案，不依賴外部庫
           CONFIGURE_CMD = ./configure \
                           --host=mipsel-linux \
                           --prefix=/usr \
@@ -355,14 +356,15 @@ jobs:
                           --disable-shared \
                           --enable-static \
                           CFLAGS="$(CFLAGS) -static" \
-                          LDFLAGS="$(LDFLAGS) -static -all-static"
+                          LDFLAGS="$(LDFLAGS) -static"
           
           all:
+          	@echo "👉 [Wrapper] Checking configuration..."
           	@if [ ! -f $(SRC_NAME)/Makefile ]; then \
-          		echo "👉 [Ebtables] Configuring..."; \
+          		echo "👉 [Wrapper] Running configure for $(SRC_NAME)..."; \
           		(cd $(SRC_NAME) && $(CONFIGURE_CMD)); \
           	fi
-          	@echo "👉 [Ebtables] Building..."; \
+          	@echo "👉 [Wrapper] Building static binary..."
           	$(MAKE) -C $(SRC_NAME) all
           
           clean:
@@ -371,41 +373,46 @@ jobs:
           	fi
           
           romfs:
-          	@echo "👉 [Ebtables] Installing to ROMFS..."
-          	# [關鍵修正] 這裡抓 ebtables-legacy 放入系統
-          	$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables
+          	@echo "👉 [Wrapper] Installing to ROMFS..."
+          	# v2.0.11 編譯完成後，靜態檔案通常直接叫 ebtables
+          	@if [ -f $(SRC_NAME)/ebtables ]; then \
+          		$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables; \
+          		echo "   ✅ Installed binary: /bin/ebtables"; \
+          	else \
+          		echo "   ❌ Error: Binary not found!"; exit 1; \
+          	fi
           	$(ROMFSINST) $(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
-          echo "✅ Ebtables prepared."
+          echo "✅ Ebtables setup complete."
           
-          # =========================================================
-          # 2. Arptables v0.0.5
-          # 策略：完全使用您驗證成功的「僅新增 Arptables」邏輯
-          # =========================================================
+          # ========================================
+          # 2. 新增 Arptables v0.0.5
+          # ========================================
           echo "⬇️ Processing Arptables..."
           
           mkdir -p "$ARP_ROOT"
           cd "$ARP_ROOT" || exit 1
           
-          # 檢查是否已經設定過
+          # 檢查是否已經設定過，避免重複執行
           if [ ! -f "Makefile" ] || ! grep -q "arptables" "Makefile"; then
             
             ARP_TAR="arptables-0.0.5.tar.gz"
             ARP_URL="https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz"
             
+            echo "   Downloading $ARP_URL ..."
             wget --no-check-certificate "$ARP_URL" -O "$ARP_TAR" || exit 1
             tar -xf "$ARP_TAR" || exit 1
             rm -f "$ARP_TAR"
             
-            # 智慧偵測目錄名稱 (保留您的成功邏輯)
+            # 找出解壓後的目錄名稱
             ARP_SRC_NAME=$(ls -d arptables-0*/ | head -n 1 | sed 's/\///')
             echo "   Detected source: [$ARP_SRC_NAME]"
             chmod -R u+w "$ARP_SRC_NAME"
+          
+            echo "🔧 Creating Arptables Wrapper Makefile..."
             
-            echo "🔧 Creating Arptables Wrapper..."
-            
-            # [Arptables Makefile] (您驗證成功的版本)
+            # 建立外層 Makefile，讓編譯系統知道如何編譯它
             cat << EOF > Makefile
           SRC_NAME=$ARP_SRC_NAME
           
@@ -425,15 +432,17 @@ jobs:
           	\$(MAKE) -C \$(SRC_NAME) clean
           EOF
           
-            # 註冊到編譯列表
             echo "🔧 Registering arptables in trunk/user/Makefile..."
             cd "$BASE_DIR" || exit 1
             
+            # 將 arptables 加入編譯列表
+            # 邏輯：如果在 Makefile 裡還沒看到 arptables，就加進去
             if ! grep -q "dir_y += arptables" Makefile; then
-                # 嘗試加在 ebtables 後面
+                # 嘗試加在 ebtables 後面，保持整齊
                 if grep -q "dir_y += ebtables" Makefile; then
                     sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile
                 else
+                    # 找不到 ebtables 就加在檔案最後
                     echo "dir_y += arptables" >> Makefile
                 fi
                 echo "   ✅ Added to compilation list."
@@ -442,21 +451,29 @@ jobs:
             fi
             
           else
-             echo "⚠️ Arptables seems already configured. Skipping."
+            echo "⚠️ Arptables seems already configured. Skipping."
           fi
           
-          # =========================================================
-          # 3. 核心支援 (Kernel Config)
-          # =========================================================
+          # ========================================
+          # 2. 核心支援 (Kernel Config)
+          # ========================================
           cd "$GITHUB_WORKSPACE"
           TARGET_KCONF="padavan-ng/trunk/linux-3.4.x/.config"
           
           if [ -f "$TARGET_KCONF" ]; then
-             echo "🔧 Enabling Kernel modules..."
+             echo "🔧 Enabling Kernel modules for Arptables..."
+             
+             # 強制開啟模組 (m = module)
              sed -i 's/^.*CONFIG_IP_NF_ARPTABLES.*/CONFIG_IP_NF_ARPTABLES=m/' "$TARGET_KCONF"
+             sed -i 's/^.*CONFIG_IP_NF_ARPFILTER.*/CONFIG_IP_NF_ARPFILTER=m/' "$TARGET_KCONF"
+             sed -i 's/^.*CONFIG_IP_NF_ARP_MANGLE.*/CONFIG_IP_NF_ARP_MANGLE=m/' "$TARGET_KCONF"
+             
+             # 如果設定檔裡原本沒有這幾行，則追加到最後
              grep -q "CONFIG_IP_NF_ARPTABLES" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPTABLES=m" >> "$TARGET_KCONF"
              grep -q "CONFIG_IP_NF_ARPFILTER" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARPFILTER=m" >> "$TARGET_KCONF"
              grep -q "CONFIG_IP_NF_ARP_MANGLE" "$TARGET_KCONF" || echo "CONFIG_IP_NF_ARP_MANGLE=m" >> "$TARGET_KCONF"
+             
+             echo "   ✅ Kernel config updated."
           fi
           
           echo "::endgroup::"

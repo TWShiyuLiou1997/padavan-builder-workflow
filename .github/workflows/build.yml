@@ -308,7 +308,7 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables (v24 強化穩定版)
+      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables (v27 Size Optimized)
       - name: 🔥 Network Tools (Smart Compile & Robust Kernel Config)
         run: |
           echo "::group::Smart Compile Network Tools"
@@ -319,7 +319,7 @@ jobs:
           ARP_ROOT="$BASE_DIR/arptables"
           
           # ========================================
-          # 1. Ebtables v2.0.11 (基於成功版強化)
+          # 1. Ebtables v2.0.11 (固定為 src 目錄 + Size Optimization)
           # ========================================
           echo "⬇️ Upgrading Ebtables to v2.0.11..."
           rm -rf "$EBT_ROOT"
@@ -329,13 +329,16 @@ jobs:
           wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
           tar -xf src.tar.gz
           rm -f src.tar.gz
+          # Ebtables 統一改名為 src，方便 Makefile 撰寫
           mv ebtables-2.0.11 src
           
           echo "🔧 Creating Ebtables Wrapper Makefile..."
+          
+          # [修正] CFLAGS 改為 -Os 以符合嵌入式設備需求
           cat << 'EOF' > Makefile
           SRC_NAME = src
           CC ?= gcc
-          CFLAGS ?= -O2
+          CFLAGS ?= -Os
           LDFLAGS ?= -s
           
           CONFIGURE_CMD = ./configure \
@@ -382,7 +385,7 @@ jobs:
           EOF
           
           # ========================================
-          # 2. Arptables v0.0.5 (基於成功版強化)
+          # 2. Arptables v0.0.5 (完全還原成功版邏輯 - 動態目錄名)
           # ========================================
           echo "⬇️ Processing Arptables..."
           mkdir -p "$ARP_ROOT"
@@ -392,13 +395,17 @@ jobs:
             wget --no-check-certificate "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" -O src.tar.gz
             tar -xf src.tar.gz
             rm -f src.tar.gz
+            
+            # 【關鍵還原】不改名為 src，保留原廠目錄名
             ARP_SRC_NAME=$(ls -d arptables-0*/ | head -n 1 | sed 's/\///')
-            mv "$ARP_SRC_NAME" src
-            chmod -R u+w src
+            echo "   Detected source directory: [$ARP_SRC_NAME]"
+            chmod -R u+w "$ARP_SRC_NAME"
           
             echo "🔧 Creating Arptables Wrapper Makefile..."
+            
+            # 使用 EOF (不加引號) 以便寫入 $ARP_SRC_NAME
             cat << EOF > Makefile
-          SRC_NAME = src
+          SRC_NAME=$ARP_SRC_NAME
           all:
           	\$(MAKE) -C \$(SRC_NAME) \
           		CC="\$(CC)" \
@@ -429,6 +436,7 @@ jobs:
           	\$(MAKE) -C \$(SRC_NAME) clean
           EOF
           
+            echo "🔧 Registering arptables in trunk/user/Makefile..."
             cd "$BASE_DIR" || exit 1
             if ! grep -q "dir_y += arptables" Makefile; then
                 sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile 2>/dev/null || echo "dir_y += arptables" >> Makefile
@@ -446,7 +454,6 @@ jobs:
              MODULES="CONFIG_IP_NF_ARPTABLES CONFIG_IP_NF_ARPFILTER CONFIG_IP_NF_ARP_MANGLE CONFIG_NF_LOG_ARP CONFIG_BRIDGE_EBT_ARP CONFIG_BRIDGE_EBT_ARPREPLY"
              for mod in $MODULES; do
                 if grep -q "$mod" "$TARGET_KCONF"; then
-                   # 處理所有註解變體，強行替換整行為 =m
                    sed -i "s|^.*$mod.*$|$mod=m|" "$TARGET_KCONF"
                    echo "   ✅ Forced $mod=m (Updated)"
                 else

@@ -23,7 +23,7 @@ on:
         description: '自定義配置 JSON (Wi-Fi/密碼/IP)'
         required: true
         type: string
-        default: '{"lanip":"192.168.1.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
+        default: '{"lanip":"192.168.0.1","signaccount":"admin","signpassword":"admin","wifi2gssid":"Padavan","wifi2gpsk":"1234567890","wifi5gssid":"Padavan-5G","wifi5gpsk":"1234567890"}'
 
   push:
     tags:
@@ -308,10 +308,10 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables
-      - name: 🔥 Network Tools (Smart Compile Ebtables & Arptables)
+      # 7.6 [網路工具] 升級 Ebtables v2.0.11 & Arptables (v13 成功模式複製版)
+      - name: 🔥 Network Tools (Final Wrapper Strategy)
         run: |
-          echo "::group::Smart Compile Network Tools"
+          echo "::group::Network Tools Upgrade"
           
           # === 設定路徑 ===
           BASE_DIR="$GITHUB_WORKSPACE/padavan-ng/trunk/user"
@@ -319,36 +319,34 @@ jobs:
           ARP_ROOT="$BASE_DIR/arptables"
           
           # ========================================
-          # 1. Ebtables v2.0.11 (Autotools 轉接 Padavan)
+          # 1. Ebtables v2.0.11 (Wrapper 模式)
           # ========================================
           echo "⬇️ Upgrading Ebtables to v2.0.11..."
           
-          # 清理並重建目錄
+          # 重置目錄
           rm -rf "$EBT_ROOT"
           mkdir -p "$EBT_ROOT"
           cd "$EBT_ROOT" || exit 1
           
-          # 下載 v2.0.11 (新版架構)
+          # 下載並解壓，統一目錄名稱為 src
           wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
           tar -xf src.tar.gz
           rm -f src.tar.gz
           mv ebtables-2.0.11 src
           
-          echo "🔧 Creating Translation Layer (Wrapper Makefile)..."
+          echo "🔧 Creating Ebtables Wrapper..."
           
-          # [翻譯官 Makefile]
-          # 這是關鍵：它把 Padavan 的指令轉換為 OpenWrt 式的 configure && make
+          # [Ebtables Wrapper Makefile]
+          # 1. all: 檢查是否已配置，未配置則執行 configure，然後 make
+          # 2. romfs: 這是關鍵！將編譯出的 src/ebtables 複製到韌體 /bin/ebtables
           cat << 'EOF' > Makefile
           SRC_NAME = src
           
-          # 繼承 Padavan 的編譯器設定
+          # 繼承編譯參數，強制靜態連結 (-all-static 確保不依賴 libtool)
           CC ?= gcc
           CFLAGS ?= -O2
           LDFLAGS ?= -s
           
-          # 這是模擬 OpenWrt 的配置指令
-          # --host=mipsel-linux: 告訴它我們要跑在 MIPS 路由上
-          # --enable-static: 關鍵！編譯成單一檔案，不依賴外部庫
           CONFIGURE_CMD = ./configure \
                           --host=mipsel-linux \
                           --prefix=/usr \
@@ -356,15 +354,14 @@ jobs:
                           --disable-shared \
                           --enable-static \
                           CFLAGS="$(CFLAGS) -static" \
-                          LDFLAGS="$(LDFLAGS) -static"
+                          LDFLAGS="$(LDFLAGS) -static -all-static"
           
           all:
-          	@echo "👉 [Wrapper] Checking configuration..."
           	@if [ ! -f $(SRC_NAME)/Makefile ]; then \
-          		echo "👉 [Wrapper] Running configure for $(SRC_NAME)..."; \
+          		echo "👉 [Ebtables] Configuring..."; \
           		(cd $(SRC_NAME) && $(CONFIGURE_CMD)); \
           	fi
-          	@echo "👉 [Wrapper] Building static binary..."
+          	@echo "👉 [Ebtables] Building..."; \
           	$(MAKE) -C $(SRC_NAME) all
           
           clean:
@@ -373,36 +370,34 @@ jobs:
           	fi
           
           romfs:
-          	@echo "👉 [Wrapper] Installing to ROMFS..."
-          	# v2.0.11 編譯完成後，靜態檔案通常直接叫 ebtables
-          	@if [ -f $(SRC_NAME)/ebtables ]; then \
-          		$(ROMFSINST) $(SRC_NAME)/ebtables /bin/ebtables; \
-          		echo "   ✅ Installed binary: /bin/ebtables"; \
-          	else \
-          		echo "   ❌ Error: Binary not found!"; exit 1; \
-          	fi
+          	@echo "👉 [Ebtables] Installing to ROMFS..."
+          	$(ROMFSINST) $(SRC_NAME)/ebtables /bin/ebtables
           	$(ROMFSINST) $(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
-          echo "✅ Ebtables setup complete."
+          echo "✅ Ebtables prepared."
           
           # ========================================
-          # 2. Arptables v0.0.5 (標準靜態編譯)
+          # 2. Arptables v0.0.5 (已驗證成功的邏輯)
           # ========================================
           echo "⬇️ Processing Arptables..."
           
           mkdir -p "$ARP_ROOT"
           cd "$ARP_ROOT" || exit 1
           
-          # 如果還沒設定過才執行
+          # 避免重複執行
           if [ ! -f "Makefile" ] || ! grep -q "arptables" "Makefile"; then
+            
             wget --no-check-certificate "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" -O src.tar.gz
             tar -xf src.tar.gz
             rm -f src.tar.gz
-            # 處理目錄名稱變體
+            # 處理目錄名稱變體，統一為 src
             mv arptables-v0.0.5 src 2>/dev/null || mv arptables-0.0.5 src
             
-            # Arptables 的 Wrapper
+            echo "🔧 Creating Arptables Wrapper..."
+            
+            # [Arptables Wrapper Makefile]
+            # 這是您之前測試成功的版本
             cat << 'EOF' > Makefile
           SRC_NAME=src
           all:
@@ -424,6 +419,7 @@ jobs:
             if grep -q "ebtables" Makefile; then
                if ! grep -q "arptables" Makefile; then
                    sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile
+                   echo "✅ Arptables added to build tree."
                fi
             else
                grep -q "arptables" Makefile || echo "dir_y += arptables" >> Makefile
@@ -431,10 +427,11 @@ jobs:
           fi
           
           # ========================================
-          # 3. 確保核心開啟支援
+          # 3. 核心支援 (Kernel Config)
           # ========================================
           cd "$GITHUB_WORKSPACE/padavan-ng/trunk/linux-3.4.x"
           if [ -f ".config" ]; then
+             echo "🔧 Configuring Kernel..."
              sed -i 's/^.*CONFIG_IP_NF_ARPTABLES.*/CONFIG_IP_NF_ARPTABLES=m/' .config
              grep -q "CONFIG_IP_NF_ARPTABLES" .config || echo "CONFIG_IP_NF_ARPTABLES=m" >> .config
              grep -q "CONFIG_IP_NF_ARPFILTER" .config || echo "CONFIG_IP_NF_ARPFILTER=m" >> .config
@@ -594,7 +591,7 @@ jobs:
       - name: Upload artifacts (ZIP)
         uses: actions/upload-artifact@v4
         with:
-          name: padavan_${{ env.CONFIG_VENDOR }}_${{ env.BUILD_TIMESTAMP }}
+          name: padavan_${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}_${{ env.BUILD_TIMESTAMP }}
           path: ${{ env.ZIP_FILE_PATH }}
 
       # 10. 發布 Release

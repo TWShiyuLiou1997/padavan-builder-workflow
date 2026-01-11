@@ -331,16 +331,16 @@ jobs:
           ARP_ROOT="$BASE_DIR/arptables"
           
           # ========================================
-          # 1. Ebtables v2.0.11 (Autotools 轉接 Padavan)
+          # 1. Ebtables v2.0.11 (Anti-Segfault: O2 + Static)
           # ========================================
-          echo "⬇️ Upgrading Ebtables to v2.0.11..."
+          echo "⬇️ Upgrading Ebtables to v2.0.11 (Fixing Segfault)..."
           
           # 清理並重建目錄
           rm -rf "$EBT_ROOT"
           mkdir -p "$EBT_ROOT"
           cd "$EBT_ROOT" || exit 1
           
-          # 下載 v2.0.11 (新版架構)
+          # 下載 v2.0.11
           wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
           tar -xf src.tar.gz
           rm -f src.tar.gz
@@ -348,32 +348,36 @@ jobs:
           
           echo "🔧 Creating Translation Layer (Wrapper Makefile)..."
           
-          # [翻譯官 Makefile]
-          # 這是關鍵：它把 Padavan 的指令轉換為 OpenWrt 式的 configure && make
+          # [修正版 Makefile] 
+          # 1. 改用 -O2 防止 MIPS 指令錯亂
+          # 2. 移除 ?= 讓它無視外部變數，強制生效
           cat << 'EOF' > Makefile
           SRC_NAME = src
           
-          # 繼承 Padavan 的編譯器設定
+          # 繼承 Padavan 編譯器 (cc/gcc)
           CC ?= gcc
-          CFLAGS ?= -Os
-          LDFLAGS ?= -s
           
-          # 這是模擬 OpenWrt 的配置指令
-          # --host=mipsel-linux: 告訴它我們要跑在 MIPS 路由上
-          # --enable-static: 關鍵！編譯成單一檔案，不依賴外部庫
+          # ⚠️ 關鍵修正：強制使用 -O2，絕對不要用 -Os
+          # -static: 確保不依賴外部動態庫 (減少相容性問題)
+          # -Wall: 顯示更多警告以便除錯
+          MY_CFLAGS = -O2 -static -Wall
+          MY_LDFLAGS = -static
+          
+          # 設定 configure
+          # 注意：這裡直接將 CFLAGS 寫死傳入，確保 configure 收到正確參數
           CONFIGURE_CMD = ./configure \
                           --host=mipsel-linux \
                           --prefix=/usr \
                           --sbindir=/sbin \
                           --disable-shared \
                           --enable-static \
-                          CFLAGS="$(CFLAGS) -static" \
-                          LDFLAGS="$(LDFLAGS) -static"
+                          CFLAGS="$(MY_CFLAGS)" \
+                          LDFLAGS="$(MY_LDFLAGS)"
           
           all:
-          	@echo "👉 [Wrapper] Checking configuration..."
+          	@echo "👉 [Wrapper] Checking configuration (Force O2)..."
           	@if [ ! -f $(SRC_NAME)/Makefile ]; then \
-          		echo "👉 [Wrapper] Running configure for $(SRC_NAME)..."; \
+          		echo "👉 [Wrapper] Running configure..."; \
           		(cd $(SRC_NAME) && $(CONFIGURE_CMD)); \
           	fi
           	@echo "👉 [Wrapper] Building static binary..."
@@ -386,12 +390,15 @@ jobs:
           
           romfs:
           	@echo "👉 [Ebtables] Installing to ROMFS..."
-          	# 已確認 v2.0.11 產出檔名為 ebtables-legacy，直接安裝
+          	# 確保二進位檔存在 (v2.0.11 編譯出來通常叫 ebtables-legacy)
           	$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables
+          	
+          	# ⚠️ 絕對不能漏掉這個！
+          	# Ebtables 如果找不到 ethertypes 對照表，某些版本也會直接 Segfault
           	$(ROMFSINST) $(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
-          echo "✅ Ebtables setup complete."
+          echo "✅ Ebtables v2.0.11 setup complete."
           
           # ========================================
           # 2. 新增 Arptables v0.0.5

@@ -309,7 +309,7 @@ jobs:
           echo "::endgroup::"
 
       # 7.6 [網路工具] Ebtables v2.0.11 & Arptables (v15 修正檔名版)
-      - name: 🔥 Network Tools (Final Fix: Correct Binary Names)
+      - name: 🔥 Network Tools (Final Fix:Correct Binary Names)
         run: |
           echo "::group::Network Tools Upgrade"
           

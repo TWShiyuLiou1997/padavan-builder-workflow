@@ -151,7 +151,9 @@ jobs:
             sed -i "s/CONFIG_FIRMWARE_INCLUDE_LANG_RU=y/CONFIG_FIRMWARE_INCLUDE_LANG_RU=n/g" "$FINAL_CONFIG"
             sed -i "s/CONFIG_FIRMWARE_INCLUDE_LANG_UK=y/CONFIG_FIRMWARE_INCLUDE_LANG_UK=n/g" "$FINAL_CONFIG"
          
-            # 4. [地毯式移除] 0% 疏漏清單
+            # 4. [地毯式移除 - 究極防漏版]
+            # 目標：不管該選項原本是 =y, =m, 還是 # is not set，通通強制改為 =n
+            echo "::group::Absolute Disable Modules"
             modules=(
               CIFS NTFS_3G LPRD U2EC USBIP HDPARM PARTED SMBD WINS SMBD_SYSLOG TESTPARM 
               FTPD FTPD_SSL NFSD NFSC
@@ -171,9 +173,19 @@ jobs:
             )
          
             for mod in "${modules[@]}"; do
-              sed -i "s/CONFIG_FIRMWARE_INCLUDE_${mod}=y/CONFIG_FIRMWARE_INCLUDE_${mod}=n/g" "$FINAL_CONFIG"
+              CFG_KEY="CONFIG_FIRMWARE_INCLUDE_${mod}"
+              
+              if grep -q "$CFG_KEY" "$FINAL_CONFIG"; then
+                # 如果找到該設定 (不論是開啟、關閉或註解)，整行強制替換為 =n
+                sed -i "s|^.*$CFG_KEY.*$|$CFG_KEY=n|" "$FINAL_CONFIG"
+                echo "   🚫 Forced Disabled: $mod (Overwritten)"
+              else
+                # 如果完全沒找到，則主動追加 =n (防止默認開啟)
+                echo "$CFG_KEY=n" >> "$FINAL_CONFIG"
+                echo "   🚫 Forced Disabled: $mod (Added)"
+              fi
             done
-         
+            
             echo "::endgroup::"
           fi
 

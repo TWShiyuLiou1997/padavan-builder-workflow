@@ -308,8 +308,8 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables (v27 Size Optimized)
-      - name: 🔥 Network Tools (Smart Compile & Robust Kernel Config)
+      # 7.6 [網路工具] 智慧編譯 Ebtables v2.0.11 & 新增 Arptables
+      - name: 🔥 Network Tools (Smart Compile Ebtables & Arptables)
         run: |
           echo "::group::Smart Compile Network Tools"
           
@@ -319,28 +319,36 @@ jobs:
           ARP_ROOT="$BASE_DIR/arptables"
           
           # ========================================
-          # 1. Ebtables v2.0.11 (固定為 src 目錄 + Size Optimization)
+          # 1. Ebtables v2.0.11 (Autotools 轉接 Padavan)
           # ========================================
           echo "⬇️ Upgrading Ebtables to v2.0.11..."
+          
+          # 清理並重建目錄
           rm -rf "$EBT_ROOT"
           mkdir -p "$EBT_ROOT"
           cd "$EBT_ROOT" || exit 1
           
+          # 下載 v2.0.11 (新版架構)
           wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
           tar -xf src.tar.gz
           rm -f src.tar.gz
-          # Ebtables 統一改名為 src，方便 Makefile 撰寫
           mv ebtables-2.0.11 src
           
-          echo "🔧 Creating Ebtables Wrapper Makefile..."
+          echo "🔧 Creating Translation Layer (Wrapper Makefile)..."
           
-          # [修正] CFLAGS 改為 -Os 以符合嵌入式設備需求
+          # [翻譯官 Makefile]
+          # 這是關鍵：它把 Padavan 的指令轉換為 OpenWrt 式的 configure && make
           cat << 'EOF' > Makefile
           SRC_NAME = src
+          
+          # 繼承 Padavan 的編譯器設定
           CC ?= gcc
           CFLAGS ?= -Os
           LDFLAGS ?= -s
           
+          # 這是模擬 OpenWrt 的配置指令
+          # --host=mipsel-linux: 告訴它我們要跑在 MIPS 路由上
+          # --enable-static: 關鍵！編譯成單一檔案，不依賴外部庫
           CONFIGURE_CMD = ./configure \
                           --host=mipsel-linux \
                           --prefix=/usr \
@@ -351,61 +359,58 @@ jobs:
                           LDFLAGS="$(LDFLAGS) -static"
           
           all:
-          	@echo "👉 [Ebtables] Checking configuration..."
+          	@echo "👉 [Wrapper] Checking configuration..."
           	@if [ ! -f $(SRC_NAME)/Makefile ]; then \
-          		echo "👉 [Ebtables] Running configure..."; \
+          		echo "👉 [Wrapper] Running configure for $(SRC_NAME)..."; \
           		(cd $(SRC_NAME) && $(CONFIGURE_CMD)); \
           	fi
-          	@echo "👉 [Ebtables] Building static binary..."
+          	@echo "👉 [Wrapper] Building static binary..."
           	$(MAKE) -C $(SRC_NAME) all
-          	@echo "========================================"
-          	@echo "🔎 DEBUG: Listing compiled files in $(SRC_NAME):"
-          	@ls -l $(SRC_NAME)/ebtables* 2>/dev/null || ls -l $(SRC_NAME)/
-          	@echo "========================================"
           
           clean:
-          	@if [ -f $(SRC_NAME)/Makefile ]; then $(MAKE) -C $(SRC_NAME) clean; fi
+          	@if [ -f $(SRC_NAME)/Makefile ]; then \
+          		$(MAKE) -C $(SRC_NAME) clean; \
+          	fi
           
           romfs:
           	@echo "👉 [Ebtables] Installing to ROMFS..."
-          	@if [ -f $(SRC_NAME)/ebtables-legacy ]; then \
-          		echo "   ✅ Found 'ebtables-legacy', installing..."; \
-          		$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables; \
-          	elif [ -f $(SRC_NAME)/ebtables ]; then \
-          		echo "   ✅ Found 'ebtables', installing..."; \
-          		$(ROMFSINST) $(SRC_NAME)/ebtables /bin/ebtables; \
-          	elif [ -f $(SRC_NAME)/static ]; then \
-          		echo "   ✅ Found 'static', installing..."; \
-          		$(ROMFSINST) $(SRC_NAME)/static /bin/ebtables; \
-          	else \
-          		echo "❌ Error: Could not find Ebtables binary! Listing for debug:"; \
-          		ls -F $(SRC_NAME)/; exit 1; \
-          	fi
+          	# 已確認 v2.0.11 產出檔名為 ebtables-legacy，直接安裝
+          	$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables
           	$(ROMFSINST) $(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
+          echo "✅ Ebtables setup complete."
+          
           # ========================================
-          # 2. Arptables v0.0.5 (完全還原成功版邏輯 - 動態目錄名)
+          # 2. 新增 Arptables v0.0.5
           # ========================================
           echo "⬇️ Processing Arptables..."
+          
           mkdir -p "$ARP_ROOT"
           cd "$ARP_ROOT" || exit 1
           
+          # 檢查是否已經設定過，避免重複執行
           if [ ! -f "Makefile" ] || ! grep -q "arptables" "Makefile"; then
-            wget --no-check-certificate "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" -O src.tar.gz
-            tar -xf src.tar.gz
-            rm -f src.tar.gz
             
-            # 【關鍵還原】不改名為 src，保留原廠目錄名
+            ARP_TAR="arptables-0.0.5.tar.gz"
+            ARP_URL="https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz"
+            
+            echo "   Downloading $ARP_URL ..."
+            wget --no-check-certificate "$ARP_URL" -O "$ARP_TAR" || exit 1
+            tar -xf "$ARP_TAR" || exit 1
+            rm -f "$ARP_TAR"
+            
+            # 找出解壓後的目錄名稱
             ARP_SRC_NAME=$(ls -d arptables-0*/ | head -n 1 | sed 's/\///')
-            echo "   Detected source directory: [$ARP_SRC_NAME]"
+            echo "   Detected source: [$ARP_SRC_NAME]"
             chmod -R u+w "$ARP_SRC_NAME"
           
             echo "🔧 Creating Arptables Wrapper Makefile..."
             
-            # 使用 EOF (不加引號) 以便寫入 $ARP_SRC_NAME
+            # 建立外層 Makefile，讓編譯系統知道如何編譯它
             cat << EOF > Makefile
           SRC_NAME=$ARP_SRC_NAME
+          
           all:
           	\$(MAKE) -C \$(SRC_NAME) \
           		CC="\$(CC)" \
@@ -414,23 +419,9 @@ jobs:
           		COPT_FLAGS="-Os -static" \
           		LDFLAGS="-static" \
           		arptables-legacy
-          	@echo "========================================"
-          	@echo "🔎 DEBUG: Listing compiled files in \$(SRC_NAME):"
-          	@ls -l \$(SRC_NAME)/arptables* 2>/dev/null || ls -l \$(SRC_NAME)/
-          	@echo "========================================"
           
           romfs:
-          	@echo "👉 [Arptables] Installing to ROMFS..."
-          	@if [ -f \$(SRC_NAME)/arptables-legacy ]; then \
-          		echo "   ✅ Found 'arptables-legacy', installing..."; \
-          		\$(ROMFSINST) \$(SRC_NAME)/arptables-legacy /bin/arptables; \
-          	elif [ -f \$(SRC_NAME)/arptables ]; then \
-          		echo "   ✅ Found 'arptables', installing..."; \
-          		\$(ROMFSINST) \$(SRC_NAME)/arptables /bin/arptables; \
-          	else \
-          		echo "❌ Error: Could not find Arptables binary! Listing for debug:"; \
-          		ls -F \$(SRC_NAME)/; exit 1; \
-          	fi
+          	\$(ROMFSINST) \$(SRC_NAME)/arptables-legacy /bin/arptables
           
           clean:
           	\$(MAKE) -C \$(SRC_NAME) clean
@@ -438,11 +429,26 @@ jobs:
           
             echo "🔧 Registering arptables in trunk/user/Makefile..."
             cd "$BASE_DIR" || exit 1
+            
+            # 將 arptables 加入編譯列表
+            # 邏輯：如果在 Makefile 裡還沒看到 arptables，就加進去
             if ! grep -q "dir_y += arptables" Makefile; then
-                sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile 2>/dev/null || echo "dir_y += arptables" >> Makefile
+                # 嘗試加在 ebtables 後面，保持整齊
+                if grep -q "dir_y += ebtables" Makefile; then
+                    sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile
+                else
+                    # 找不到 ebtables 就加在檔案最後
+                    echo "dir_y += arptables" >> Makefile
+                fi
+                echo "   ✅ Added to compilation list."
+            else
+                echo "   ⚠️ Already in compilation list."
             fi
+            
+          else
+            echo "⚠️ Arptables seems already configured. Skipping."
           fi
-          
+
           # ========================================
           # 3. 核心支援 (究極嚴謹 Kernel Config)
           # ========================================

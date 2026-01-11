@@ -308,8 +308,8 @@ jobs:
           echo "🎉 全局路徑替換完成！所有套件現在都指向 $NEW_VER"
           echo "::endgroup::"
 
-      # 7.6 [網路工具] 升級 Ebtables v2.0.11 & Arptables (v13 成功模式複製版)
-      - name: 🔥 Network Tools (Final Wrapper Strategy)
+      # 7.6 [網路工具] Ebtables v2.0.11 & Arptables (v15 修正檔名版)
+      - name: 🔥 Network Tools (Final Fix: Correct Binary Names)
         run: |
           echo "::group::Network Tools Upgrade"
           
@@ -319,34 +319,31 @@ jobs:
           ARP_ROOT="$BASE_DIR/arptables"
           
           # ========================================
-          # 1. Ebtables v2.0.11 (Wrapper 模式)
+          # 1. Ebtables v2.0.11 (抓取 legacy 檔名)
           # ========================================
           echo "⬇️ Upgrading Ebtables to v2.0.11..."
           
-          # 重置目錄
           rm -rf "$EBT_ROOT"
           mkdir -p "$EBT_ROOT"
           cd "$EBT_ROOT" || exit 1
           
-          # 下載並解壓，統一目錄名稱為 src
           wget --no-check-certificate "https://www.netfilter.org/pub/ebtables/ebtables-2.0.11.tar.gz" -O src.tar.gz
           tar -xf src.tar.gz
           rm -f src.tar.gz
           mv ebtables-2.0.11 src
           
-          echo "🔧 Creating Ebtables Wrapper..."
+          echo "🔧 Creating Ebtables Smart Wrapper..."
           
           # [Ebtables Wrapper Makefile]
-          # 1. all: 檢查是否已配置，未配置則執行 configure，然後 make
-          # 2. romfs: 這是關鍵！將編譯出的 src/ebtables 複製到韌體 /bin/ebtables
           cat << 'EOF' > Makefile
           SRC_NAME = src
           
-          # 繼承編譯參數，強制靜態連結 (-all-static 確保不依賴 libtool)
+          # 繼承編譯參數
           CC ?= gcc
           CFLAGS ?= -O2
           LDFLAGS ?= -s
           
+          # 模擬 OpenWrt 編譯指令
           CONFIGURE_CMD = ./configure \
                           --host=mipsel-linux \
                           --prefix=/usr \
@@ -371,33 +368,32 @@ jobs:
           
           romfs:
           	@echo "👉 [Ebtables] Installing to ROMFS..."
-          	$(ROMFSINST) $(SRC_NAME)/ebtables /bin/ebtables
+          	# 修正重點：v2.0.11 產生的檔案是 ebtables-legacy
+          	# 我們把它抓出來，並存成系統要的 /bin/ebtables
+          	$(ROMFSINST) $(SRC_NAME)/ebtables-legacy /bin/ebtables
           	$(ROMFSINST) $(SRC_NAME)/ethertypes /etc_ro/ethertypes
           EOF
           
-          echo "✅ Ebtables prepared."
+          echo "✅ Ebtables prepared (Targeting ebtables-legacy)."
           
           # ========================================
-          # 2. Arptables v0.0.5 (已驗證成功的邏輯)
+          # 2. Arptables v0.0.5 (您驗證成功的版本)
           # ========================================
           echo "⬇️ Processing Arptables..."
           
           mkdir -p "$ARP_ROOT"
           cd "$ARP_ROOT" || exit 1
           
-          # 避免重複執行
           if [ ! -f "Makefile" ] || ! grep -q "arptables" "Makefile"; then
             
             wget --no-check-certificate "https://www.netfilter.org/pub/arptables/arptables-0.0.5.tar.gz" -O src.tar.gz
             tar -xf src.tar.gz
             rm -f src.tar.gz
-            # 處理目錄名稱變體，統一為 src
             mv arptables-v0.0.5 src 2>/dev/null || mv arptables-0.0.5 src
             
             echo "🔧 Creating Arptables Wrapper..."
             
             # [Arptables Wrapper Makefile]
-            # 這是您之前測試成功的版本
             cat << 'EOF' > Makefile
           SRC_NAME=src
           all:
@@ -414,12 +410,10 @@ jobs:
           	$(MAKE) -C $(SRC_NAME) clean
           EOF
           
-            # 註冊到編譯列表
             cd "$BASE_DIR" || exit 1
             if grep -q "ebtables" Makefile; then
                if ! grep -q "arptables" Makefile; then
                    sed -i '/dir_y += ebtables/a dir_y += arptables' Makefile
-                   echo "✅ Arptables added to build tree."
                fi
             else
                grep -q "arptables" Makefile || echo "dir_y += arptables" >> Makefile
@@ -427,11 +421,10 @@ jobs:
           fi
           
           # ========================================
-          # 3. 核心支援 (Kernel Config)
+          # 3. Kernel Config
           # ========================================
           cd "$GITHUB_WORKSPACE/padavan-ng/trunk/linux-3.4.x"
           if [ -f ".config" ]; then
-             echo "🔧 Configuring Kernel..."
              sed -i 's/^.*CONFIG_IP_NF_ARPTABLES.*/CONFIG_IP_NF_ARPTABLES=m/' .config
              grep -q "CONFIG_IP_NF_ARPTABLES" .config || echo "CONFIG_IP_NF_ARPTABLES=m" >> .config
              grep -q "CONFIG_IP_NF_ARPFILTER" .config || echo "CONFIG_IP_NF_ARPFILTER=m" >> .config

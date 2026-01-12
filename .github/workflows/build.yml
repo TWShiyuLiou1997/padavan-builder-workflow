@@ -13,6 +13,7 @@ on:
         type: choice
         options:
           - TL_C2-V1
+          - HC5661A
       
       nanoversion:
         description: "開啟極限瘦身 (Nano Optimization)"

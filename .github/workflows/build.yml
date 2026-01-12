@@ -17,7 +17,7 @@ on:
       nanoversion:
         description: "開啟極限瘦身 (Nano Optimization)"
         type: boolean
-        default: false
+        default: true
 
       customization:
         description: '自定義配置 JSON (Wi-Fi/密碼/IP)'
@@ -254,15 +254,18 @@ jobs:
         run: |
           echo "::group::Iptables Upgrade & Patching"
           NEW_VER="iptables-1.8.11"
-          OLD_VER_STR="iptables-1.8.10"
           
           # --- Part 1: 處理 iptables 本體 ---
           IPT_MAKEFILE=$(find padavan-ng/trunk/user/iptables -name Makefile | head -n 1)
           IPT_DIR=$(dirname "$IPT_MAKEFILE")
           echo "✅ 鎖定 iptables Makefile: $IPT_MAKEFILE"
+          # 從 Makefile 裡面抓出目前的版本 (例如 iptables-1.8.10)
+          OLD_VER_STR=$(grep -o 'iptables-[0-9.]*' "$IPT_MAKEFILE" | head -n 1)
+          echo "✅ 偵測到舊版本: $OLD_VER_STR"
+          echo "✅ 準備升級至: $NEW_VER"
           
-          # 1. 修改版本號
-          sed -i "s/SRC_NAME=$OLD_VER_STR/SRC_NAME=$NEW_VER/g" "$IPT_MAKEFILE"
+          # 1. 修改主 Makefile 的版本號
+          sed -i "s/$OLD_VER_STR/$NEW_VER/g" "$IPT_MAKEFILE"
           
           # 2. 恢復正常的構建流程 (解決 cd error)
           sed -i 's/^all: config_test/all: download_test extract_test config_test/' "$IPT_MAKEFILE"

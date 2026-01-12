@@ -422,6 +422,47 @@ jobs:
           
           echo "::endgroup::"
 
+          # 7.7 [驅動魔改] 專治 MT7610E WISP 斷線 (修改 Beacon 超時時間)
+      - name: 🔥 Patch MT7610E Driver (Anti-Disconnect)
+        run: |
+          echo "::group::Applying Driver Patch"
+          
+          # 定義目標檔案路徑 (這是您提供的路徑)
+          # 注意：為了保險，我用了通配符 mt7610* 來同時匹配 mt7610 或 mt7610_ap 資料夾
+          TARGET_FILE=$(find padavan-ng/trunk/proprietary/rt_wifi/rtpci/3.0.X.X -name "ap_apcli.c" | grep "mt7610" | head -n 1)
+
+          if [ -f "$TARGET_FILE" ]; then
+            echo "✅ Found driver file: $TARGET_FILE"
+
+            # 1. 備份檔案 (好習慣)
+            cp "$TARGET_FILE" "${TARGET_FILE}.bak"
+
+            # 2. 執行 SED 替換 
+            # 目標: if (RTMP_TIME_AFTER(pAd->Mlme.Now32 , (pApCliEntry->ApCliRcvBeaconTime + (12 * OS_HZ))))
+            # 改為: if (RTMP_TIME_AFTER(pAd->Mlme.Now32 , (pApCliEntry->ApCliRcvBeaconTime + (60 * OS_HZ))))
+            
+            sed -i 's/12 \* OS_HZ/60 \* OS_HZ/g' "$TARGET_FILE"
+            
+            # (選用) 順便把上面的 WPA 握手 30秒 也改成 60秒 (讓連線更穩)，不需要的話這行可以刪掉
+            #sed -i 's/30 \* OS_HZ/60 \* OS_HZ/g' "$TARGET_FILE"
+
+            # 3. 驗證是否修改成功
+            echo "🔍 Verifying changes..."
+            if grep -q "60 \* OS_HZ" "$TARGET_FILE"; then
+               echo "🎉 Patch Applied Successfully!"
+               echo "--------------------------------------"
+               grep -n -C 2 "60 \* OS_HZ" "$TARGET_FILE"
+               echo "--------------------------------------"
+            else
+               echo "::error:: Patch Failed! Pattern not found."
+               exit 1
+            fi
+          else
+            echo "::error:: Driver file not found! Please check the path."
+            exit 1
+          fi
+          echo "::endgroup::"
+
       # 8. 開始編譯
       - name: Build firmware
         run: |

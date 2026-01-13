@@ -423,79 +423,79 @@ jobs:
           
           echo "::endgroup::"
 
-          # 7.7 [驅動魔改] 雙重鎖定：修復 Beacon 超時 + 防止 Peer 踢除後失憶 (完美解決方案)
+          # 7.7 [驅動魔改] 雙重鎖定：修復 Beacon 超時 + 防止 Peer 踢除後失憶 (增強版)
       - name: 🔥 Patch MT7610E Driver (Anti-Disconnect & Fast Reconnect)
         run: |
           echo "::group::Applying Ultimate Driver Patch"
           
-          # =======================================================
-          # 1. 鎖定目標檔案
-          # =======================================================
-          # 這是您原本改的檔案 (負責接收 Beacon，解決無故斷線)
-          TARGET_APCLI=$(find padavan-ng/trunk/proprietary/rt_wifi/rtpci/3.0.X.X -name "ap_apcli.c" | grep "mt7610" | head -n 1)
+          # 1. 精準搜尋目標檔案
+          # ---------------------------------------------------
+          # 搜尋 mt7610 目錄下的 ap_apcli.c (Beacon控制)
+          TARGET_APCLI=$(find padavan-ng/trunk/proprietary/rt_wifi/rtpci/3.0.X.X -type f -name "ap_apcli.c" | grep "mt7610" | head -n 1)
           
-          # [新增] 這是控制連線邏輯的檔案 (負責處理斷線後的反應，解決 disconnected by peer)
-          # 它通常與 ap_apcli.c 在同一個目錄下
-          TARGET_CTRL=$(dirname "$TARGET_APCLI")/apcli_ctrl.c
+          # 搜尋 mt7610 目錄下的 apcli_ctrl.c (連線控制)
+          # 注意：直接搜尋檔案，不依賴 dirname 推算
+          TARGET_CTRL=$(find padavan-ng/trunk/proprietary/rt_wifi/rtpci/3.0.X.X -type f -name "apcli_ctrl.c" | grep "mt7610" | head -n 1)
 
           if [ -f "$TARGET_APCLI" ] && [ -f "$TARGET_CTRL" ]; then
             echo "✅ 找到驅動核心檔案："
             echo "   - Beacon控制: $TARGET_APCLI"
             echo "   - 連線控制:   $TARGET_CTRL"
           else
-            echo "::error:: 找不到驅動檔案！請檢查路徑。"
+            echo "::error:: ❌ 找不到驅動檔案！請檢查路徑。"
             exit 1
           fi
 
-          # =======================================================
-          # 2. [原有修復] 延長 Beacon 等待時間 (維持您原本邏輯)
-          # =======================================================
+          # 2. 修復 Beacon 超時 (維持原邏輯)
+          # ---------------------------------------------------
           echo "🔧 Patching Beacon Timeout..."
           cp "$TARGET_APCLI" "${TARGET_APCLI}.bak"
           
-          sed -i 's/12 \* OS_HZ/60 \* OS_HZ/g' "$TARGET_APCLI"
+          # 將 12 * OS_HZ 改為 60 * OS_HZ
+          sed -i 's/12[[:space:]]*\*[[:space:]]*OS_HZ/60 * OS_HZ/g' "$TARGET_APCLI"
+          
           if grep -q "60 \* OS_HZ" "$TARGET_APCLI"; then
              echo "   ✅ Beacon Timeout patch applied."
           else
-             echo "::error:: Beacon patch failed."
+             echo "::error:: ❌ Beacon patch failed. (Pattern not found)"
              exit 1
           fi
 
-          # =======================================================
-          # 3. [新增修復] 針對 "disconnected by peer" 與 "MLME Request Disconnect"
-          #    啟用「殭屍重連模式」：被踢除或斷線時，禁止清空 BSSID/SSID，強制驅動直接重連
-          # =======================================================
+          # 3. 修復 Peer Disconnect (殭屍重連模式)
+          # ---------------------------------------------------
           echo "🔧 Patching Peer Disconnect Logic..."
           cp "$TARGET_CTRL" "${TARGET_CTRL}.bak"
           
-          # 使用 sed 批量註解掉 NdisZeroMemory 和變數歸零的操作
-          # 這會同時作用於 'ApCliCtrlPeerDeAssocReqAction' 和 'ApCliCtrlDeAssocAction'
+          # 使用 sed 註解掉清除 SSID/BSSID 的代碼
+          # 使用 [[:space:]]* 忽略空格/Tab差異，並匹配 NdisZeroMemory
           
-          # 1. 禁止清除 BSSID (保留 MAC 地址)
-          sed -i '/NdisZeroMemory(pAd->ApCfg.ApCliTab\[ifIndex\].ApCliMlmeAux.Bssid/s/^/\/\//' "$TARGET_CTRL"
+          # A. 禁止清除 BSSID
+          sed -i 's/^[[:space:]]*NdisZeroMemory.*ApCliMlmeAux.Bssid/\/\/&/' "$TARGET_CTRL"
           
-          # 2. 禁止清除 SSID 長度
-          sed -i '/pAd->ApCfg.ApCliTab\[ifIndex\].ApCliMlmeAux.SsidLen = 0/s/^/\/\//' "$TARGET_CTRL"
+          # B. 禁止清除 SSID 長度
+          sed -i 's/^[[:space:]]*.*ApCliMlmeAux.SsidLen[[:space:]]*=[[:space:]]*0/\/\/&/' "$TARGET_CTRL"
           
-          # 3. 禁止清除 SSID 字串
-          sed -i '/NdisZeroMemory(pAd->ApCfg.ApCliTab\[ifIndex\].ApCliMlmeAux.Ssid/s/^/\/\//' "$TARGET_CTRL"
+          # C. 禁止清除 SSID 字串
+          sed -i 's/^[[:space:]]*NdisZeroMemory.*ApCliMlmeAux.Ssid,/\/\/&/' "$TARGET_CTRL"
           
-          # 4. 禁止清除 RSSI (雖然影響不大，但保持數據完整)
-          sed -i '/pAd->ApCfg.ApCliTab\[ifIndex\].ApCliMlmeAux.Rssi = 0/s/^/\/\//' "$TARGET_CTRL"
+          # D. 禁止清除 RSSI
+          sed -i 's/^[[:space:]]*.*ApCliMlmeAux.Rssi[[:space:]]*=[[:space:]]*0/\/\/&/' "$TARGET_CTRL"
 
-          # =======================================================
-          # 4. 驗證修復
-          # =======================================================
+          # 4. 驗證修復結果
+          # ---------------------------------------------------
           echo "🔍 Verifying apcli_ctrl.c changes..."
-          # 檢查是否有被成功註解掉 (//)
-          if grep -q "//NdisZeroMemory(pAd->ApCfg.ApCliTab\[ifIndex\].ApCliMlmeAux.Bssid" "$TARGET_CTRL"; then
+          
+          # 檢查是否有任何一行被註解掉 (含有 //NdisZeroMemory...ApCliMlmeAux)
+          if grep -q "//.*NdisZeroMemory.*ApCliMlmeAux" "$TARGET_CTRL"; then
              echo "🎉 Ultimate Fix Applied! (Fast Reconnect Mode Enabled)"
              echo "--------------------------------------"
-             # 顯示關鍵代碼段，確認兩個函數都被修改
-             grep -nC 1 "//NdisZeroMemory" "$TARGET_CTRL" | head -n 20
+             # 顯示修改後的關鍵片段供確認
+             grep -n "//.*NdisZeroMemory" "$TARGET_CTRL" | head -n 5
              echo "--------------------------------------"
           else
-             echo "::error:: apcli_ctrl.c patch failed!"
+             echo "::error:: ❌ apcli_ctrl.c patch failed!"
+             echo "DEBUG: 原始檔案內容片段 (供檢查):"
+             grep -C 2 "ApCliMlmeAux.Bssid" "$TARGET_CTRL" | head -n 10
              exit 1
           fi
           

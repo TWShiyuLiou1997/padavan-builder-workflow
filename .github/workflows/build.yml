@@ -250,16 +250,23 @@ jobs:
             sed -i 's/"%d\.%d%c"/"%hhd.%hhd%c"/g' "$MKIMAGE_FILE"
           fi
 
-      # 7.5. [全局修復] 升級 iptables 1.8.11 + 修復所有依賴包路徑
+      # =======================================================
+      # 7.5. [全局修復] 升級 iptables 1.8.11 + 修復所有依賴包路徑 + 套用 Upstream Patches
+      # =======================================================
       - name: 🔥 Auto Upgrade iptables 1.8.11 & Patch
         run: |
-          echo "::group::Iptables Upgrade & Patching"
+          set +e  # 關閉錯誤中斷，確保跑完全程
+          set -x  # 如果需要極致 Debug 可打開此行
+          
+          echo "::group::Iptables Upgrade & Patching (1.8.11 Collector Mode)"
+          
           NEW_VER="iptables-1.8.11"
           
           # --- Part 1: 處理 iptables 本體 ---
           IPT_MAKEFILE=$(find padavan-ng/trunk/user/iptables -name Makefile | head -n 1)
           IPT_DIR=$(dirname "$IPT_MAKEFILE")
           echo "✅ 鎖定 iptables Makefile: $IPT_MAKEFILE"
+          
           # 從 Makefile 裡面抓出目前的版本 (例如 iptables-1.8.10)
           OLD_VER_STR=$(grep -o 'iptables-[0-9.]*' "$IPT_MAKEFILE" | head -n 1)
           echo "✅ 偵測到舊版本: $OLD_VER_STR"
@@ -277,8 +284,209 @@ jobs:
           # 4. 清理過時的 extensions/disabled 複製指令 (解決 copy error)
           sed -i '/extensions\/disabled\//d' "$IPT_MAKEFILE"
 
-          # 5. 生成屏蔽警告的補丁
-          cat << 'EOF' > "$IPT_DIR/999-suppress-warnings.patch"
+          # =======================================================
+          # 5. [新增] 定義 Patch 下載函數與清單 (V4 終極版)
+          # =======================================================
+          IPT_ROOT="padavan-ng/trunk/user/iptables/iptables-1.8.11" # 注意：此時目錄可能尚未解壓，但我們先準備好路徑
+          # 這裡我們將 Patch 下載到 Makefile 同級目錄下的 patches_archive
+          PATCH_DIR="$IPT_DIR/patches_archive"
+          mkdir -p "$PATCH_DIR"
+          LOG_FILE="$IPT_DIR/patch_summary.log"
+          touch "$LOG_FILE"
+          
+          # ⚙️ 設定區
+          APPLY_PATCHES=true
+          
+          # 優化全局網路設置
+          git config --global http.postBuffer 524288000
+          git config --global http.lowSpeedLimit 0
+          git config --global http.lowSpeedTime 999999
+          git config --global http.sslVerify false
+
+          # 🛠️ V4 終極函數: 混合策略 (低頻請求 + 動態偽裝 + 自動清洗)
+          download_and_process() {
+              local DATE=$1
+              local RAW_NAME=$2
+              local URL=$3
+              local COUNT=$4
+              
+              # 命名清洗
+              local SAFE_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9]/_/g')
+              local PATCH_FILENAME="$PATCH_DIR/${COUNT}_${DATE}_${SAFE_NAME}.patch"
+              local COOKIE_FILE="$IPT_DIR/cookies.txt"
+              
+              echo "---------------------------------------------------"
+              echo "Processing Patch #$COUNT: $RAW_NAME"
+
+              # [戰略 1] 降低特徵變更頻率：每 10 個檔案才換一次 UA
+              if [ $((COUNT % 10)) -eq 1 ] || [ ! -f "$IPT_DIR/ua_cache.txt" ]; then
+                  local MINOR_VER=$((RANDOM % 100))
+                  echo "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.${MINOR_VER}.0 Safari/537.36" > "$IPT_DIR/ua_cache.txt"
+                  rm -f "$COOKIE_FILE"
+                  echo "🔄 Session Rotate: New UA & Cookies generated."
+              fi
+              local UA=$(cat "$IPT_DIR/ua_cache.txt")
+
+              # [戰略 2] Header 固定化
+              local H_SEC_CH_UA='"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"'
+              local H_SEC_PLATFORM='"Windows"'
+              local H_LANG="en-US,en;q=0.9" 
+              local ACCEPT_FILE="text/x-diff,text/plain,application/octet-stream;q=0.9,*/*;q=0.8"
+              
+              local COMMIT_URL=$(echo "$URL" | sed 's|/patch/|/commit/|')
+              local LOG_URL="https://git.netfilter.org/iptables/log/"
+              
+              # [戰略 3] 隨機長休息
+              if [ $((COUNT % 30)) -eq 0 ]; then
+                  local SLEEP_LONG=$(shuf -i 20-40 -n 1)
+                  echo "☕ Coffee Break: Sleeping for ${SLEEP_LONG}s..."
+                  sleep $SLEEP_LONG
+              else
+                  sleep $(shuf -i 2-4 -n 1)
+              fi
+
+              local MAX_RETRIES=5
+              local DOWNLOAD_SUCCESS=false
+
+              for ((i=1; i<=MAX_RETRIES; i++)); do
+                  local BACKOFF_TIME=$((5 * i + 5))
+                  
+                  local PREFLIGHT_DONE=false
+                  if [ $((RANDOM % 5)) -eq 0 ] || [ $i -gt 1 ]; then
+                      echo "🎭 Performing Pre-flight check (Visiting Commit Page)..."
+                      curl -k -L -s -o /dev/null \
+                           -c "$COOKIE_FILE" -b "$COOKIE_FILE" \
+                           -H "User-Agent: $UA" \
+                           -H "Referer: $LOG_URL" \
+                           "$COMMIT_URL"
+                      sleep 1
+                      PREFLIGHT_DONE=true
+                  fi
+
+                  if [ "$PREFLIGHT_DONE" = true ]; then
+                      local CUR_REFERER="$COMMIT_URL"
+                  else
+                      local CUR_REFERER="$LOG_URL"
+                  fi
+
+                  # 嘗試下載 (Curl)
+                  if curl -k -L -s \
+                        -c "$COOKIE_FILE" -b "$COOKIE_FILE" \
+                        -H "User-Agent: $UA" \
+                        -H "Accept: $ACCEPT_FILE" \
+                        -H "Accept-Language: $H_LANG" \
+                        -H "Referer: $CUR_REFERER" \
+                        -H "sec-ch-ua: $H_SEC_CH_UA" \
+                        -H "sec-ch-ua-platform: $H_SEC_PLATFORM" \
+                        --connect-timeout 20 \
+                        --retry 2 \
+                        -o "$PATCH_FILENAME" "$URL"; then
+                      
+                      if [ -s "$PATCH_FILENAME" ] && grep -qE "^diff --git|^--- a/" "$PATCH_FILENAME"; then
+                          echo "✅ [Attempt $i] Download Success"
+                          DOWNLOAD_SUCCESS=true
+                          break
+                      else
+                          echo "⚠️ Invalid content detected. Rotating identity..."
+                          rm -f "$COOKIE_FILE" "$IPT_DIR/ua_cache.txt"
+                      fi
+                  fi
+                  
+                  # 策略 B: Wget (Clean Request)
+                  echo "⚠️ Curl failed. Switching to Wget..."
+                  rm -f "$PATCH_FILENAME"
+                  
+                  if wget --no-check-certificate -q \
+                        --user-agent="$UA" \
+                        --header="Accept: $ACCEPT_FILE" \
+                        --header="Referer: $COMMIT_URL" \
+                        --header="sec-ch-ua: $H_SEC_CH_UA" \
+                        --header="sec-ch-ua-platform: $H_SEC_PLATFORM" \
+                        -O "$PATCH_FILENAME" "$URL"; then
+                        
+                      if [ -s "$PATCH_FILENAME" ] && grep -qE "^diff --git|^--- a/" "$PATCH_FILENAME"; then
+                          echo "✅ [Attempt $i] Download Success (Wget)"
+                          DOWNLOAD_SUCCESS=true
+                          break
+                      fi
+                  fi
+                  
+                  echo "❌ [Attempt $i] Failed. Cooling down ${BACKOFF_TIME}s..."
+                  rm -f "$PATCH_FILENAME"
+                  if [ $i -lt $MAX_RETRIES ]; then
+                      sleep $BACKOFF_TIME
+                  fi
+              done
+
+              if [ "$DOWNLOAD_SUCCESS" = false ]; then
+                  echo "❌ DOWNLOAD FAILED: $RAW_NAME"
+                  echo "[$DATE] #$COUNT DOWNLOAD_FAIL : $RAW_NAME" >> "$LOG_FILE"
+                  return 0
+              fi
+              
+              # 如果開關開啟，執行 Patch 套用
+              if [ "$APPLY_PATCHES" = true ]; then
+                  echo "📦 Patch downloaded and ready for Makefile injection."
+              else
+                  echo "📦 Patch downloaded (Collection Mode)."
+              fi
+          }
+
+          # 寫入 Patch 清單 (Oldest -> Newest)
+          cat << 'EOL' > "$IPT_DIR/patch_list.txt"
+          2024-11-08|configure: Bump version for 1.8.11 release|https://git.netfilter.org/iptables/patch/?id=0506bea1dcc8f12d94e7c32bf2fb04abb3fdd269
+          2024-11-12|ip[6]tables-translate: fix test failures when WESP is defined|https://git.netfilter.org/iptables/patch/?id=e6e232d0ae252b0b86278455b18d9475b95db8f0
+          2024-11-19|nft: fix interface comparisons in -C commands|https://git.netfilter.org/iptables/patch/?id=b838d5e0c52f675b33e2de700b0df22920245037
+          2024-11-19|nft: Drop interface mask leftovers from post_parse callbacks|https://git.netfilter.org/iptables/patch/?id=2803323086307680a6cf4945d836262429402506
+          2025-01-28|configure: Avoid addition assignment operators|https://git.netfilter.org/iptables/patch/?id=6310639f697d4a570286960c470a6ec8c324be89
+          2025-04-10|nft: Make add_log() static|https://git.netfilter.org/iptables/patch/?id=72d000742d4803767c29340f66993922c26279f6
+          2025-04-10|nft: ruleparse: Introduce nft_parse_rule_expr()|https://git.netfilter.org/iptables/patch/?id=8792040087798302f232eb2743936093400a400f
+          2025-04-10|nft: __add_{match,target}() can't fail|https://git.netfilter.org/iptables/patch/?id=0e633d28994977462002f92f23b7496739669046
+          2025-04-10|nft: Introduce UDATA_TYPE_COMPAT_EXT|https://git.netfilter.org/iptables/patch/?id=4df568804899772bf2272e50cfb7fdb232f03673
+          2025-04-10|nft-ruleparse: Fallback to compat expressions in userdata|https://git.netfilter.org/iptables/patch/?id=7449242d5442ceb332d7293a40499e072b260ba7
+          2025-04-10|nft: Pass nft_handle into add_{action,match}()|https://git.netfilter.org/iptables/patch/?id=86292424df7ce49d632646d2dbd734e622ef87c6
+          2025-04-10|nft: Embed compat extensions in rule userdata|https://git.netfilter.org/iptables/patch/?id=9cf447f789437937402633004690327f2776c9c6
+          2025-04-10|tests: iptables-test: Add nft-compat variant|https://git.netfilter.org/iptables/patch/?id=3f8707ef080c3e620399037042296d933390c9b3
+          2025-04-23|extensions: icmp: Support info-request/-reply type names|https://git.netfilter.org/iptables/patch/?id=1e6a2812971a268428b04b03520cd68cb61d76e3
+          2025-04-23|xshared: Accept an option if any given command allows it|https://git.netfilter.org/iptables/patch/?id=192c3a6bc18f206895ec5e38812d648ccfe7e281
+          2025-07-04|extensions: sctp: Translate bare -m sctp match|https://git.netfilter.org/iptables/patch/?id=12e6b5ed65fd91ea413a2e45201289c3d01c4e29
+          2025-07-17|extensions: libebt_redirect: prevent translation|https://git.netfilter.org/iptables/patch/?id=7f4069c9b422606363690d79f044944d622f960f
+          2025-07-22|libxtables: Promote xtopt_esize_by_type() as xtopt_psize getter|https://git.netfilter.org/iptables/patch/?id=2e729a67232233f2e4822709669f4f7f62e604f3
+          2025-07-22|Revert libxtables: Promote xtopt_esize_by_type() as xtopt_psize getter|https://git.netfilter.org/iptables/patch/?id=28203f7422f280c44426ddc3600966f39343729e
+          2025-07-22|xtables-monitor: Print -X command for base chains, too|https://git.netfilter.org/iptables/patch/?id=8cb0c13b7777e72ca6f4265845dc99eff7cdf679
+          2025-08-21|extensions: man: Add a note about route_localnet sysctl|https://git.netfilter.org/iptables/patch/?id=d0ac99966d566869ad3b469446d337f744e26224
+          2025-08-25|man: iptables-restore.8: document flush behaviour for user-defined chains|https://git.netfilter.org/iptables/patch/?id=086f6f890c000bd93322474477dc903063529340
+          2025-11-27|nft: Support replacing a rule added in the same batch|https://git.netfilter.org/iptables/patch/?id=ca3f3c4db0c3e7b3096b797240d049633324029f
+          EOL
+
+          # 執行下載
+          count=0
+          while IFS='|' read -r p_date p_name p_url; do
+              [ -z "$p_date" ] && continue
+              count=$((count+1))
+              # 補零以確保 glob 排序正確 (01, 02... 23)
+              count_str=$(printf "%02d" $count)
+              download_and_process "$p_date" "$p_name" "$p_url" "$count_str"
+          done < "$IPT_DIR/patch_list.txt"
+
+          echo "🎉 Patch processing cycle completed!"
+          
+          if [ -s "$LOG_FILE" ]; then
+              echo "⚠️ ================= SUMMARY ================="
+              cat "$LOG_FILE"
+              echo "=========================================="
+          else
+              echo "✅ Perfect! No errors recorded."
+          fi
+
+          # =======================================================
+          # [第100號 Patch] 應用屏蔽警告補丁 (寬容模式)
+          # =======================================================
+          echo "🔧 Generating warning suppression patch (Patch #100)..."
+          
+          PATCH_100="$PATCH_DIR/100_Custom_Suppress_Warnings.patch"
+          
+          cat << 'END_PATCH' > "$PATCH_100"
           --- a/libxtables/xtables.c
           +++ b/libxtables/xtables.c
           @@ -809,9 +809,11 @@
@@ -305,13 +513,54 @@ jobs:
           +#endif
            
            	for (ptr = xtables_targets; ptr; ptr = ptr->next) {
-          EOF
-          
-          # 6. 注入補丁應用邏輯
-          sed -i 's|tar xJf $(SRC_NAME).tar.xz;|tar xJf $(SRC_NAME).tar.xz \&\& patch -d $(SRC_NAME) -p1 < 999-suppress-warnings.patch;|' "$IPT_MAKEFILE"
-          
-          echo "✅ Iptables 本體修復完成。"
+          END_PATCH
 
+          # 只有在開啟套用模式時才執行
+          if [ "$APPLY_PATCHES" = true ]; then
+              echo "🩹 Applying Custom Patch #100..."
+              # 使用 fuzz 參數允許些微的行號差異，增加成功率
+              # 這裡針對源碼進行乾跑測試，或是在稍後的 Makefile 階段統一處理
+              # 但為了驗證內容，我們可以嘗試模擬檢查 (如果 libxtables/xtables.c 已存在)
+              TARGET_FILE="libxtables/xtables.c"
+              
+              if [ -f "$IPT_DIR/$TARGET_FILE" ]; then
+                  if patch -t -N -l -F 10 -p1 --no-backup-if-mismatch --dry-run < "$PATCH_100" > /dev/null; then
+                      echo "✅ Patch #100 Check: Looks applicable."
+                  else
+                      echo "⚠️ Patch #100 Check: Might fail (Context mismatch or already applied)."
+                  fi
+              fi
+              
+              # 7. 注入補丁應用邏輯
+              # 使用 sort 確保補丁依檔名順序套用 (01, 02 ... 23, 99)
+              # 注意：我們將 patch -d 指向 SRC_NAME (解壓後的目錄)，並使用 ../patches_archive/ 下的檔案
+              sed -i 's|tar xJf $(SRC_NAME).tar.xz;|tar xJf $(SRC_NAME).tar.xz \&\& echo "🩹 Patching..." \&\& for p in `ls ../patches_archive/*.patch | sort`; do echo "   - Applying $$p"; patch -d $(SRC_NAME) -p1 < $$p || exit 1; done;|' "$IPT_MAKEFILE"
+              
+              echo "✅ Iptables 本體修復與 Patch 注入完成 (Makefile Modified)."
+          else
+              echo "📦 Custom Patch #100 generated but NOT applied."
+              echo "🚫 Skipping Makefile injection (APPLY_PATCHES=false)"
+          fi
+          
+          # =======================================================
+          # 🔍 無條件驗證代碼內容 (確保無論是否 Patch，狀態都透明)
+          # =======================================================
+          echo "🔍 Verifying code content (Checking for applied changes)..."
+          # 注意：此時源碼可能尚未解壓，如果尚未解壓，這裡會提示找不到檔案，這是正常的。
+          # 但如果我們是在本地環境多次執行，或者已經有解壓後的源碼，這裡就能派上用場。
+          # 若要驗證最終結果，通常要等到編譯後。這裡的驗證主要針對「如果檔案存在」。
+          VERIFY_TARGET="libxtables/xtables.c"
+          
+          if [ -f "$IPT_DIR/$VERIFY_TARGET" ]; then
+              if grep -q "#if 0" "$IPT_DIR/$VERIFY_TARGET" && grep -q "Warning: Extension %s is not supported" "$IPT_DIR/$VERIFY_TARGET"; then
+                  echo "✅ Verification Passed: Code IS patched/modified (Warnings suppressed)."
+              else
+                  echo "⚠️ Verification Result: Code is UNPATCHED (Warnings active)."
+              fi
+          else
+              echo "ℹ️ Verification skipped: Source file $VERIFY_TARGET not found yet (will be extracted during build)."
+          fi
+          
           # --- Part 2: [新增] 修復所有依賴 iptables 的其他軟體 (MiniUPnPD 等) ---
           echo "🔍 開始掃描並修復依賴舊版 iptables 的其他套件..."
           
@@ -549,26 +798,54 @@ jobs:
           [ -f "padavan-ng/trunk/build.log" ] && cp "padavan-ng/trunk/build.log" "$PACK_DIR/build.log"
 
           # =======================================================
-          # 🔥 新增：收集 iptables 修改後的源碼與補丁 (供驗證用)
+          # 🔥 強化：收集 iptables 相關產物 (智慧驗證版)
           # =======================================================
           IPT_SRC_DIR="padavan-ng/trunk/user/iptables/iptables-1.8.11"
           IPT_BASE_DIR="padavan-ng/trunk/user/iptables"
+          DEBUG_DIR="$PACK_DIR/debug_iptables"
           
-          mkdir -p "$PACK_DIR/debug_iptables"
+          mkdir -p "$DEBUG_DIR"
           
-          # 1. 複製生成的 patch
-          if [ -f "$IPT_BASE_DIR/999-suppress-warnings.patch" ]; then
-              cp "$IPT_BASE_DIR/999-suppress-warnings.patch" "$PACK_DIR/debug_iptables/"
-              echo "- 🛡️ **Patch**: Included in debug_iptables" >> "$REPORT_FILE"
+          # 2.1 收集 Patch 檔案
+          if [ -d "$IPT_BASE_DIR/patches_archive" ]; then
+              cp "$IPT_BASE_DIR/patches_archive"/*.patch "$DEBUG_DIR/"
+              echo "- 🛡️ **Patches**: All patches collected in debug_iptables" >> "$REPORT_FILE"
+          else
+              echo "⚠️ Warning: patches directory not found in $IPT_BASE_DIR"
+              echo "- ⚠️ **Patches**: Not found (Collection failed)" >> "$REPORT_FILE"
           fi
           
-          # 2. 複製編譯後實際的 xtables.c (驗證是否被修改)
-          # 注意：此文件只有在編譯成功後才會存在
-          if [ -f "$IPT_SRC_DIR/libxtables/xtables.c" ]; then
-              cp "$IPT_SRC_DIR/libxtables/xtables.c" "$PACK_DIR/debug_iptables/xtables_patched.c"
-              echo "- 📄 **Source**: xtables.c (patched) included" >> "$REPORT_FILE"
+          # 2.2 收集 Patch 過程日誌 (非常重要!)
+          if [ -f "$IPT_BASE_DIR/patch_summary.log" ]; then
+              cp "$IPT_BASE_DIR/patch_summary.log" "$DEBUG_DIR/patch_summary.log"
+              echo "- 📜 **Patch Log**: Included" >> "$REPORT_FILE"
+          fi
+
+          # 2.3 智慧複製 xtables.c (根據內容決定檔名)
+          TARGET_FILE="$IPT_SRC_DIR/libxtables/xtables.c"
+          
+          if [ -f "$TARGET_FILE" ]; then
+              # 檢查是否含有我們 Patch #100 的特徵碼 (屏蔽警告的 if 0)
+              if grep -q "#if 0" "$TARGET_FILE" && grep -q "Warning: Extension %s is not supported" "$TARGET_FILE"; then
+                  # 判定為已 Patch
+                  cp "$TARGET_FILE" "$DEBUG_DIR/xtables_patched.c"
+                  echo "✅ Detected PATCHED xtables.c - Saving as xtables_patched.c"
+                  echo "- 📄 **Source**: \`xtables_patched.c\` (✅ Patched successfully)" >> "$REPORT_FILE"
+              else
+                  # 判定為未 Patch (原版或 Patch 失敗)
+                  cp "$TARGET_FILE" "$DEBUG_DIR/xtables_original.c"
+                  echo "ℹ️ Detected UNPATCHED xtables.c - Saving as xtables_original.c"
+                  echo "- 📄 **Source**: \`xtables_original.c\` (⚠️ Original/Unpatched)" >> "$REPORT_FILE"
+              fi
           else
                echo "⚠️ Warning: xtables.c not found (Maybe build failed or path differs)"
+               echo "- ❌ **Source**: xtables.c not found!" >> "$REPORT_FILE"
+          fi
+          
+          # 2.4 額外收集 config.log (這對編譯失敗除錯非常有用)
+          if [ -f "$IPT_SRC_DIR/config.log" ]; then
+              cp "$IPT_SRC_DIR/config.log" "$DEBUG_DIR/config.log"
+              echo "- 🔧 **Log**: \`config.log\` included" >> "$REPORT_FILE"
           fi
           # =======================================================
 

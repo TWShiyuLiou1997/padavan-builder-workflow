@@ -436,27 +436,27 @@ jobs:
           cat << 'EOL' > "$IPT_DIR/patch_list.txt"
           2024-11-08|configure: Bump version for 1.8.11 release|https://git.netfilter.org/iptables/patch/?id=0506bea1dcc8f12d94e7c32bf2fb04abb3fdd269
           2024-11-12|ip[6]tables-translate: fix test failures when WESP is defined|https://git.netfilter.org/iptables/patch/?id=e6e232d0ae252b0b86278455b18d9475b95db8f0
-          2024-11-19|nft: fix interface comparisons in -C commands|https://git.netfilter.org/iptables/patch/?id=b838d5e0c52f675b33e2de700b0df22920245037
-          2024-11-19|nft: Drop interface mask leftovers from post_parse callbacks|https://git.netfilter.org/iptables/patch/?id=2803323086307680a6cf4945d836262429402506
+          2024-11-19|nft: fix interface comparisons in -C commands|https://git.netfilter.org/iptables/patch/?id=40406dbfaefbc204134452b2747bae4f6a122848
+          2024-11-19|nft: Drop interface mask leftovers from post_parse callbacks|https://git.netfilter.org/iptables/patch/?id=b3f3e256c263b9a1db49732696aba0dde084ef5e
           2025-01-28|configure: Avoid addition assignment operators|https://git.netfilter.org/iptables/patch/?id=6310639f697d4a570286960c470a6ec8c324be89
-          2025-04-10|nft: Make add_log() static|https://git.netfilter.org/iptables/patch/?id=72d000742d4803767c29340f66993922c26279f6
-          2025-04-10|nft: ruleparse: Introduce nft_parse_rule_expr()|https://git.netfilter.org/iptables/patch/?id=8792040087798302f232eb2743936093400a400f
-          2025-04-10|nft: __add_{match,target}() can't fail|https://git.netfilter.org/iptables/patch/?id=0e633d28994977462002f92f23b7496739669046
-          2025-04-10|nft: Introduce UDATA_TYPE_COMPAT_EXT|https://git.netfilter.org/iptables/patch/?id=4df568804899772bf2272e50cfb7fdb232f03673
-          2025-04-10|nft-ruleparse: Fallback to compat expressions in userdata|https://git.netfilter.org/iptables/patch/?id=7449242d5442ceb332d7293a40499e072b260ba7
-          2025-04-10|nft: Pass nft_handle into add_{action,match}()|https://git.netfilter.org/iptables/patch/?id=86292424df7ce49d632646d2dbd734e622ef87c6
-          2025-04-10|nft: Embed compat extensions in rule userdata|https://git.netfilter.org/iptables/patch/?id=9cf447f789437937402633004690327f2776c9c6
-          2025-04-10|tests: iptables-test: Add nft-compat variant|https://git.netfilter.org/iptables/patch/?id=3f8707ef080c3e620399037042296d933390c9b3
+          2025-04-10|nft: Make add_log() static|https://git.netfilter.org/iptables/patch/?id=17fb168f007eb4200a1d3325898cf5256a029d81
+          2025-04-10|nft: ruleparse: Introduce nft_parse_rule_expr()|https://git.netfilter.org/iptables/patch/?id=d84b1647514f3121bd4a6adfca9a977751c39bbc
+          2025-04-10|nft: __add_{match,target}() can't fail|https://git.netfilter.org/iptables/patch/?id=2db8bf2fbf080f6a054b658df65c468bfa0db68d
+          2025-04-10|nft: Introduce UDATA_TYPE_COMPAT_EXT|https://git.netfilter.org/iptables/patch/?id=f6f0f4f55794a5f1add6f728f80f29f12f36ecd5
+          2025-04-10|nft-ruleparse: Fallback to compat expressions in userdata|https://git.netfilter.org/iptables/patch/?id=ff5f6a208efccd4e2bd8d4fdaf5d284ce54ff69e
+          2025-04-10|nft: Pass nft_handle into add_{action,match}()|https://git.netfilter.org/iptables/patch/?id=739d9bd57ad26bd52bed569264daa97b5943e08d
+          2025-04-10|nft: Embed compat extensions in rule userdata|https://git.netfilter.org/iptables/patch/?id=7746fa0b1619e1bd8465c9a98bdbead628ed428a
+          2025-04-10|tests: iptables-test: Add nft-compat variant|https://git.netfilter.org/iptables/patch/?id=fdb541cddad0681ea3ab1fca8a3949dcf49fb194
           2025-04-23|extensions: icmp: Support info-request/-reply type names|https://git.netfilter.org/iptables/patch/?id=1e6a2812971a268428b04b03520cd68cb61d76e3
           2025-04-23|xshared: Accept an option if any given command allows it|https://git.netfilter.org/iptables/patch/?id=192c3a6bc18f206895ec5e38812d648ccfe7e281
           2025-07-04|extensions: sctp: Translate bare -m sctp match|https://git.netfilter.org/iptables/patch/?id=12e6b5ed65fd91ea413a2e45201289c3d01c4e29
-          2025-07-17|extensions: libebt_redirect: prevent translation|https://git.netfilter.org/iptables/patch/?id=7f4069c9b422606363690d79f044944d622f960f
-          2025-07-22|libxtables: Promote xtopt_esize_by_type() as xtopt_psize getter|https://git.netfilter.org/iptables/patch/?id=2e729a67232233f2e4822709669f4f7f62e604f3
-          2025-07-22|Revert libxtables: Promote xtopt_esize_by_type() as xtopt_psize getter|https://git.netfilter.org/iptables/patch/?id=28203f7422f280c44426ddc3600966f39343729e
+          2025-07-17|extensions: libebt_redirect: prevent translation|https://git.netfilter.org/iptables/patch/?id=d33c6ad308cf7b9f627aeed48a5163c0374b5035
+          2025-07-22|libxtables: Promote xtopt_esize_by_type() as xtopt_psize getter|https://git.netfilter.org/iptables/patch/?id=786b75f7c9b9feaa294da097c2e9727747162c79
+          2025-07-22|Revert libxtables: Promote xtopt_esize_by_type() as xtopt_psize getter|https://git.netfilter.org/iptables/patch/?id=f66687b6cb5fd0bb36107c30339aa7f4ff75e98e
           2025-07-22|xtables-monitor: Print -X command for base chains, too|https://git.netfilter.org/iptables/patch/?id=8cb0c13b7777e72ca6f4265845dc99eff7cdf679
-          2025-08-21|extensions: man: Add a note about route_localnet sysctl|https://git.netfilter.org/iptables/patch/?id=d0ac99966d566869ad3b469446d337f744e26224
-          2025-08-25|man: iptables-restore.8: document flush behaviour for user-defined chains|https://git.netfilter.org/iptables/patch/?id=086f6f890c000bd93322474477dc903063529340
-          2025-11-27|nft: Support replacing a rule added in the same batch|https://git.netfilter.org/iptables/patch/?id=ca3f3c4db0c3e7b3096b797240d049633324029f
+          2025-08-21|extensions: man: Add a note about route_localnet sysctl|https://git.netfilter.org/iptables/patch/?id=102e9607c63266c7f3413f8dcae51d9476e396e4
+          2025-08-25|man: iptables-restore.8: document flush behaviour for user-defined chains|https://git.netfilter.org/iptables/patch/?id=c3d5053db05f99bd72219aebeefc7fb0195ac041
+          2025-11-27|nft: Support replacing a rule added in the same batch|https://git.netfilter.org/iptables/patch/?id=78d7a5f8619f3965ec2da13003a876c808c40cfb
           EOL
 
           # 執行下載

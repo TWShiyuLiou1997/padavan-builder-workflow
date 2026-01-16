@@ -285,7 +285,7 @@ jobs:
           sed -i '/extensions\/disabled\//d' "$IPT_MAKEFILE"
 
           # =======================================================
-          # 5. [新增] 定義 Patch 下載函數與清單 (V4 終極版)
+          # 5. [新增] 定義 Patch 下載函數與清單 (V5 終極修復版: 解決 Octal 08 崩潰)
           # =======================================================
           IPT_ROOT="padavan-ng/trunk/user/iptables/iptables-1.8.11" # 注意：此時目錄可能尚未解壓，但我們先準備好路徑
           # 這裡我們將 Patch 下載到 Makefile 同級目錄下的 patches_archive
@@ -303,12 +303,12 @@ jobs:
           git config --global http.lowSpeedTime 999999
           git config --global http.sslVerify false
 
-          # 🛠️ V4 終極函數: 混合策略 (低頻請求 + 動態偽裝 + 自動清洗)
+          # 🛠️ V5 終極函數: 混合策略 (低頻請求 + 動態偽裝 + 自動清洗 + 強制十進位運算)
           download_and_process() {
               local DATE=$1
               local RAW_NAME=$2
               local URL=$3
-              local COUNT=$4
+              local COUNT=$4  # 傳入值如 "08", "09"
               
               # 命名清洗
               local SAFE_NAME=$(echo "$RAW_NAME" | sed 's/[^a-zA-Z0-9]/_/g')
@@ -319,7 +319,8 @@ jobs:
               echo "Processing Patch #$COUNT: $RAW_NAME"
 
               # [戰略 1] 降低特徵變更頻率：每 10 個檔案才換一次 UA
-              if [ $((COUNT % 10)) -eq 1 ] || [ ! -f "$IPT_DIR/ua_cache.txt" ]; then
+              # ✅ Fix: 使用 10#$COUNT 強制以十進位解析，避免 "08" 被視為無效八進位
+              if [ $((10#$COUNT % 10)) -eq 1 ] || [ ! -f "$IPT_DIR/ua_cache.txt" ]; then
                   local MINOR_VER=$((RANDOM % 100))
                   echo "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.${MINOR_VER}.0 Safari/537.36" > "$IPT_DIR/ua_cache.txt"
                   rm -f "$COOKIE_FILE"
@@ -337,7 +338,8 @@ jobs:
               local LOG_URL="https://git.netfilter.org/iptables/log/"
               
               # [戰略 3] 隨機長休息
-              if [ $((COUNT % 30)) -eq 0 ]; then
+              # ✅ Fix: 使用 10#$COUNT 強制以十進位解析
+              if [ $((10#$COUNT % 30)) -eq 0 ]; then
                   local SLEEP_LONG=$(shuf -i 20-40 -n 1)
                   echo "☕ Coffee Break: Sleeping for ${SLEEP_LONG}s..."
                   sleep $SLEEP_LONG
@@ -531,12 +533,17 @@ jobs:
                   fi
               fi
               
-              # 7. 注入補丁應用邏輯
-              # 使用 sort 確保補丁依檔名順序套用 (01, 02 ... 23, 99)
-              # 注意：我們將 patch -d 指向 SRC_NAME (解壓後的目錄)，並使用 ../patches_archive/ 下的檔案
-              sed -i 's|tar xJf $(SRC_NAME).tar.xz;|tar xJf $(SRC_NAME).tar.xz \&\& echo "🩹 Patching..." \&\& for p in `ls ../patches_archive/*.patch | sort`; do echo "   - Applying $$p"; patch -d $(SRC_NAME) -p1 < $$p || exit 1; done;|' "$IPT_MAKEFILE"
-              
-              echo "✅ Iptables 本體修復與 Patch 注入完成 (Makefile Modified)."
+          # =======================================================
+          # 7. 注入補丁應用邏輯 (Fix: 改用 @ 作為 sed 分隔符，避免與 | sort 衝突)
+          # =======================================================
+          # 使用 sort 確保補丁依檔名順序套用 (01, 02 ... 23, 99)
+          # 注意：我們將 patch -d 指向 SRC_NAME (解壓後的目錄)，並使用 ../patches_archive/ 下的檔案
+          
+          # ❌ 舊寫法 (會崩潰): s|...|... | sort ...| 
+          # ✅ 新寫法 (已修復): s@...@... | sort ...@
+          sed -i 's@tar xJf $(SRC_NAME).tar.xz;@tar xJf $(SRC_NAME).tar.xz \&\& echo "🩹 Patching..." \&\& for p in `ls ../patches_archive/*.patch | sort`; do echo "   - Applying $$p"; patch -d $(SRC_NAME) -p1 < $$p || exit 1; done;@' "$IPT_MAKEFILE"
+          
+          echo "✅ Iptables 本體修復與 Patch 注入完成 (Makefile Modified)."
           else
               echo "📦 Custom Patch #100 generated but NOT applied."
               echo "🚫 Skipping Makefile injection (APPLY_PATCHES=false)"

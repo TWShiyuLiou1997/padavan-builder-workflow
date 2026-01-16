@@ -551,14 +551,22 @@ jobs:
           # 若要驗證最終結果，通常要等到編譯後。這裡的驗證主要針對「如果檔案存在」。
           VERIFY_TARGET="libxtables/xtables.c"
           
+          # 使用 IPT_DIR 變數確保路徑正確
           if [ -f "$IPT_DIR/$VERIFY_TARGET" ]; then
+              # 檢查是否含有特徵碼 (#if 0 包裹著 Warning)
               if grep -q "#if 0" "$IPT_DIR/$VERIFY_TARGET" && grep -q "Warning: Extension %s is not supported" "$IPT_DIR/$VERIFY_TARGET"; then
                   echo "✅ Verification Passed: Code IS patched/modified (Warnings suppressed)."
+                  echo "👇 Current Code Snippet (Looks Good):"
+                  # 顯示匹配行及其上下 3 行，方便人工確認
+                  grep -nC 3 "Warning: Extension %s is not supported" "$IPT_DIR/$VERIFY_TARGET"
               else
                   echo "⚠️ Verification Result: Code is UNPATCHED (Warnings active)."
+                  echo "👇 Current Code Snippet (Original/Unpatched):"
+                  grep -nC 3 "Warning: Extension %s is not supported" "$IPT_DIR/$VERIFY_TARGET"
               fi
           else
               echo "ℹ️ Verification skipped: Source file $VERIFY_TARGET not found yet (will be extracted during build)."
+              echo "   (This is normal for a clean build before compilation starts)"
           fi
           
           # --- Part 2: [新增] 修復所有依賴 iptables 的其他軟體 (MiniUPnPD 等) ---

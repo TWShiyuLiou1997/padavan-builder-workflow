@@ -428,9 +428,16 @@ jobs:
               
               # 如果開關開啟，執行 Patch 套用
               if [ "$APPLY_PATCHES" = true ]; then
-                  echo "📦 Patch downloaded and ready for Makefile injection."
+                  echo "🩹 Applying patch (Max Fuzz Mode)..."
+                  # -t: 自動跳過缺檔, -N: 跳過已修復, -F 10: 允許10行誤差
+                  if patch -t -N -l -F 10 -p1 --no-backup-if-mismatch --reject-file=- < "$PATCH_FILENAME"; then
+                      echo "✅ Patch Applied."
+                  else
+                      echo "⚠️ PATCH FAILED (Skipped/Mismatch)"
+                      echo "[$DATE] #$COUNT PATCH_FAIL : $RAW_NAME" >> "$LOG_FILE"
+                  fi
               else
-                  echo "📦 Patch downloaded (Collection Mode)."
+                  echo "📦 Patch downloaded but NOT applied (Collection Mode)"
               fi
           }
 
@@ -525,7 +532,7 @@ jobs:
               # 但為了驗證內容，我們可以嘗試模擬檢查 (如果 libxtables/xtables.c 已存在)
               TARGET_FILE="libxtables/xtables.c"
               
-              if [ -f "$IPT_DIR/$TARGET_FILE" ]; then
+              if [ -f "$IPT_ROOT/$TARGET_FILE" ]; then
                   if patch -t -N -l -F 10 -p1 --no-backup-if-mismatch --dry-run < "$PATCH_100" > /dev/null; then
                       echo "✅ Patch #100 Check: Looks applicable."
                   else
@@ -558,8 +565,8 @@ jobs:
           # 若要驗證最終結果，通常要等到編譯後。這裡的驗證主要針對「如果檔案存在」。
           VERIFY_TARGET="libxtables/xtables.c"
           
-          # 使用 IPT_DIR 變數確保路徑正確
-          if [ -f "$IPT_DIR/$VERIFY_TARGET" ]; then
+          # 使用 IPT_ROOT 變數確保路徑正確
+          if [ -f "$IPT_ROOT/$VERIFY_TARGET" ]; then
               # 檢查是否含有特徵碼 (#if 0 包裹著 Warning)
               if grep -q "#if 0" "$IPT_DIR/$VERIFY_TARGET" && grep -q "Warning: Extension %s is not supported" "$IPT_DIR/$VERIFY_TARGET"; then
                   echo "✅ Verification Passed: Code IS patched/modified (Warnings suppressed)."

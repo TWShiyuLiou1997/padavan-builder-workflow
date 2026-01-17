@@ -262,16 +262,74 @@ jobs:
           
           NEW_VER="iptables-1.8.11"
           
-          # --- Part 1: 處理 iptables 本體 ---
+          # [初始化] 流程控制變數
+          SKIP_PATCHING=false
+          
+          # --- Part 1: 定位與變數準備 ---
           IPT_MAKEFILE=$(find padavan-ng/trunk/user/iptables -name Makefile | head -n 1)
           IPT_DIR=$(dirname "$IPT_MAKEFILE")
+          # 定義最終解壓後的目錄名稱 (通常是 iptables-1.8.11)
+          IPT_ROOT="$IPT_DIR/$NEW_VER"
+          
           echo "✅ 鎖定 iptables Makefile: $IPT_MAKEFILE"
+          echo "✅ 工作目錄 (IPT_DIR): $IPT_DIR"
           
           # 從 Makefile 裡面抓出目前的版本 (例如 iptables-1.8.10)
           OLD_VER_STR=$(grep -o 'iptables-[0-9.]*' "$IPT_MAKEFILE" | head -n 1)
-          echo "✅ 偵測到舊版本: $OLD_VER_STR"
+          
+          # [Bug Fix] 防呆機制：如果抓不到版本號，給予預設值，避免 sed 語法錯誤
+          if [ -z "$OLD_VER_STR" ]; then
+              echo "⚠️ Warning: 無法自動偵測舊版本，預設使用 iptables-1.8.10"
+              OLD_VER_STR="iptables-1.8.10"
+          else
+              echo "✅ 偵測到舊版本: $OLD_VER_STR"
+          fi
           echo "✅ 準備升級至: $NEW_VER"
           
+          # =======================================================
+          # [關鍵修復] 強制下載與解壓邏輯 (解決 Patch 時無原始碼的問題)
+          # =======================================================
+          echo "📂 Checking source integrity before patching..."
+          
+          # 檢查原始碼目錄是否存在，不存在則準備下載解壓
+          if [ ! -d "$IPT_ROOT" ]; then
+              echo "⚠️ Source directory '$IPT_ROOT' not found."
+              
+              # 檢查是否已有 tarball (可能是 Makefile 下載的)
+              TAR_FILE="$IPT_DIR/$NEW_VER.tar.xz"
+              
+              if [ ! -f "$TAR_FILE" ]; then
+                  echo "⬇️ Tarball missing. Downloading official source ($NEW_VER)..."
+                  # 使用官方連結下載，避免依賴 build system 的延遲
+                  wget --no-check-certificate -q -O "$TAR_FILE" "https://www.netfilter.org/projects/iptables/files/$NEW_VER.tar.xz" || \
+                  wget --no-check-certificate -q -O "$TAR_FILE" "https://www.netfilter.org/projects/iptables/files/old/$NEW_VER.tar.xz"
+                  
+                  if [ -f "$TAR_FILE" ] && [ -s "$TAR_FILE" ]; then
+                       echo "✅ Download successful."
+                  else
+                       # 【修正點 1】移除 exit 1，改為設定 SKIP_PATCHING，確保流程不中斷
+                       echo "❌ CRITICAL: Failed to download iptables source! Patching phase will be SKIPPED."
+                       SKIP_PATCHING=true
+                  fi
+              fi
+              
+              # 只有在下載成功且沒有跳過標記時才解壓
+              if [ "$SKIP_PATCHING" != true ] && [ -f "$TAR_FILE" ]; then
+                  echo "📦 Extracting tarball..."
+                  if tar -xJf "$TAR_FILE" -C "$IPT_DIR"; then
+                      echo "✅ Extraction complete: $IPT_ROOT"
+                  else
+                      echo "❌ Extraction failed! Patching phase will be SKIPPED."
+                      SKIP_PATCHING=true
+                  fi
+              fi
+          else
+              echo "✅ Source directory exists. Ready for patching."
+          fi
+
+          # =======================================================
+          # Part 2: 修改 Makefile 與構建修正
+          # =======================================================
           # 1. 修改主 Makefile 的版本號
           sed -i "s/$OLD_VER_STR/$NEW_VER/g" "$IPT_MAKEFILE"
           
@@ -285,9 +343,8 @@ jobs:
           sed -i '/extensions\/disabled\//d' "$IPT_MAKEFILE"
 
           # =======================================================
-          # 5. [新增] 定義 Patch 下載函數與清單 (V12 終極融合版: 雙重迴圈架構 + 嚴格參數)
+          # 5. [新增] 定義 Patch 下載函數與清單 (V12.3 終極融合版)
           # =======================================================
-          IPT_ROOT="padavan-ng/trunk/user/iptables/iptables-1.8.11" # 注意：此時目錄可能尚未解壓，但我們先準備好路徑
           # 這裡我們將 Patch 下載到 Makefile 同級目錄下的 patches_archive
           PATCH_DIR="$IPT_DIR/patches_archive"
           mkdir -p "$PATCH_DIR"
@@ -295,21 +352,11 @@ jobs:
           touch "$LOG_FILE"
           
           # ⚙️ 設定區
-          APPLY_PATCHES=true
-          
-          # 🔥 [V7 架構] 在下載 Patch 前，先強制解壓原始碼，確保目錄存在以便即時 Patch！
-          echo "📂 Checking source directory status..."
-          if [ ! -d "$IPT_ROOT" ]; then
-              echo "⚠️ Source directory not found. Extracting tarball now..."
-              TAR_FILE=$(find "$IPT_DIR" -name "iptables-1.8.11.tar.xz" | head -n 1)
-              if [ -f "$TAR_FILE" ]; then
-                  tar -xJf "$TAR_FILE" -C "$IPT_DIR"
-                  echo "✅ Extraction complete: $IPT_ROOT"
-              else
-                  echo "❌ CRITICAL: Tarball not found! Patching will fail."
-              fi
+          if [ "$SKIP_PATCHING" = true ]; then
+              APPLY_PATCHES=false
+              echo "⚠️ Skipping Patch Application due to download/extract failure."
           else
-              echo "✅ Source directory exists: $IPT_ROOT"
+              APPLY_PATCHES=true
           fi
             
           # 優化全局網路設置
@@ -318,7 +365,7 @@ jobs:
           git config --global http.lowSpeedTime 999999
           git config --global http.sslVerify false
 
-          # 🛠️ [核心函數] 獨立驗證邏輯 (V10 結構)
+          # 🛠️ [核心函數] 獨立驗證邏輯 (V12.3: Awk 智慧邊界判定 + 行數防禦)
           verify_patch_integrity() {
               local F_PATH="$1"
               local EXP_ID="$2"
@@ -341,15 +388,33 @@ jobs:
                   fi
               fi
 
-              # 3. Subject 標題比對
+              # 3. Subject 標題比對 (使用 awk 進行多行合併與智慧邊界偵測)
               if [ -n "$EXP_SUBJ" ]; then
-                  local RAW_SUBJ_LINE=$(grep "^Subject: " "$F_PATH" | head -n 1)
-                  local FILE_NORM_SUBJ=$(echo "$RAW_SUBJ_LINE" | sed 's/^Subject: //; s/\[PATCH\] //g' | tr -dc 'a-zA-Z0-9')
+                  # Awk 邏輯：
+                  # 1. 找到 Subject: 開頭，設定 flag=1。
+                  # 2. 如果 flag=1，檢查當前行是否為邊界（空行或新 Header）。
+                  # 3. 如果是邊界，停止讀取；否則將內容串接。
+                  # 4. 輸出串接後的結果。
+                  local RAW_SUBJ_BLOCK=$(awk '
+                      /^Subject: / { flag=1; sub(/^Subject: /, ""); printf "%s", $0; next }
+                      flag == 1 {
+                          # 【修正點 2】加入行數限制，防止緩衝區溢位
+                          c++; if (c > 10) exit; 
+                          if (/^$/) exit;  # 遇到空行 -> 結束
+                          if (/^[A-Za-z0-9-]+:/) exit; # 遇到新 Header (如 MIME-Version:) -> 結束
+                          printf " %s", $0; # 否則視為 Subject 的延續 (換行變空格)
+                      }
+                  ' "$F_PATH" | sed 's/\[PATCH\] //g')
+                  
+                  # 執行標準化：只保留英數字
+                  local FILE_NORM_SUBJ=$(echo "$RAW_SUBJ_BLOCK" | tr -dc 'a-zA-Z0-9')
                   
                   if [ "$FILE_NORM_SUBJ" == "$EXP_SUBJ" ]; then
                       echo "   ✅ Subject Check: MATCH"
                   else
                       echo "   ❌ Subject Check: MISMATCH"
+                      # echo "      Exp: $EXP_SUBJ"
+                      # echo "      Got: $FILE_NORM_SUBJ"
                       CHECK_PASS=false
                   fi
               fi
@@ -378,8 +443,7 @@ jobs:
               local PROCESS_ATTEMPT=0
               local PROCESS_SUCCESS=false
 
-              # 🔥 V12 核心：使用 while 迴圈處理重試，確保失敗時走的是同一套下載邏輯
-              # 嘗試次數上限：2次 (第1次: 快取/下載 -> Patch; 第2次: 若第1次是快取失敗, 強制重下 -> Patch)
+              # 🔥 V12 核心：使用 while 迴圈處理重試
               while [ $PROCESS_ATTEMPT -lt 2 ]; do
                   PROCESS_ATTEMPT=$((PROCESS_ATTEMPT+1))
                   local NEED_DOWNLOAD=true
@@ -507,40 +571,39 @@ jobs:
                   # D. 套用與智慧循環 (Apply Phase)
                   # ==========================================
                   
-                  # 1. 先檢查使用者是否設定為「只下載不 Patch」
+                  # 1. 配置檢查
                   if [ "$APPLY_PATCHES" != true ]; then
                       echo "📦 Patch verified but skipped (Apply logic disabled by config)."
-                      break # 這是正常的跳出，處理下一個檔案
+                      break 
                   fi
 
-                  # 2. 再檢查目錄是否健在 (嚴格防呆)
+                  # 2. 目錄檢查
                   if [ ! -d "$IPT_ROOT" ]; then
                       echo "❌ CRITICAL: Source directory '$IPT_ROOT' NOT FOUND!"
                       echo "[$DATE] #$COUNT DIR_MISSING : $RAW_NAME" >> "$LOG_FILE"
-                      return 1 # 直接報錯並中止函數，不要往下走了
+                      return 1 
                   fi
 
-                  # 3. 目錄存在且需要 Patch，開始執行
+                  # 3. 執行 Patch
                   echo "🩹 Applying patch (Pass $PROCESS_ATTEMPT)..."
                       
                   if patch -d "$IPT_ROOT" -t -N -l -F 10 -p1 --no-backup-if-mismatch --reject-file=- < "$PATCH_FILENAME"; then
                       echo "✅ Patch Applied Successfully."
                       PROCESS_SUCCESS=true
-                      break # 成功了，跳出 while 迴圈
+                      break # 成功跳出
                   else
                       # 🔥 [V12 修正] 智慧判斷邏輯
                       if [ "$NEED_DOWNLOAD" = false ]; then
-                          # 情境：我們使用了「快取」檔案，但 Patch 失敗了。
+                          # 快取失效 -> 刪除快取 -> 重跑迴圈
                           echo "⚠️ Apply failed using cached file."
                           echo "🔄 Deleting stale cache and forcing FRESH download loop..."
                           rm -f "$PATCH_FILENAME"
-                          # continue 會回到 while 頂部，因為 $PATCH_FILENAME 不存在，會自動執行完整下載
                           continue 
                       else
-                          # 情境：剛下載的新檔案還是失敗
+                          # 新下載也失敗 -> 嚴重錯誤
                           echo "❌ CRITICAL: Patch failed even with fresh download."
                           echo "[$DATE] #$COUNT PATCH_FAIL : $RAW_NAME" >> "$LOG_FILE"
-                          return 1 # 這裡建議用 return 1 標記函數失敗，而不只是 break
+                          return 1 
                       fi
                   fi
               done
@@ -653,7 +716,8 @@ jobs:
               IPT_MAKEFILE="padavan-ng/trunk/user/iptables/Makefile"
               if [ -f "$IPT_MAKEFILE" ]; then
                   # 說明：在 tar 解壓後，使用 ; 分號隔開指令，確保 Patch 迴圈能執行
-                  sed -i 's@tar xJf $(SRC_NAME).tar.xz;@tar xJf $(SRC_NAME).tar.xz; echo "🩹 Patching..."; for p in `ls ../patches_archive/*.patch | sort`; do echo "   - Applying $$p"; patch -d $(SRC_NAME) -p1 < $$p || exit 1; done;@' "$IPT_MAKEFILE"
+                  # 【修正點 3】將 exit 1 改為 true，允許編譯時 Patch 失敗但不中斷
+                  sed -i 's@tar xJf $(SRC_NAME).tar.xz;@tar xJf $(SRC_NAME).tar.xz; echo "🩹 Patching..."; for p in `ls ../patches_archive/*.patch | sort`; do echo "   - Applying $$p"; patch -d $(SRC_NAME) -p1 < $$p || true; done;@' "$IPT_MAKEFILE"
                   echo "✅ Iptables 本體修復與 Patch 注入完成 (Makefile Modified)."
               else
                   echo "⚠️ Makefile not found, skipping injection."

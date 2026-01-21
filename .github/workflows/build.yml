@@ -712,7 +712,9 @@ jobs:
           done
           
           # 3. 最終驗證 (確認是否還有殘留)
-          REMAINING_COUNT=$(grep -r "busybox-1.24.x" user/ | wc -l)
+          # 🔥 修正點：加上 || true，防止 grep 沒找到東西(返回1)導致腳本崩潰
+          REMAINING_COUNT=$(grep -r "busybox-1.24.x" user/ | wc -l || true)
+          
           if [ "$REMAINING_COUNT" -ne 0 ]; then
               echo "❌ Build script cleanup failed! Found $REMAINING_COUNT occurrences."
               # 列出殘留檔案供 Debug

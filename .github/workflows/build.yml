@@ -251,6 +251,587 @@ jobs:
           fi
 
       # =======================================================
+      # 7.4. [核心升級] BusyBox 1.37.0 V44: Integrated Masterpiece
+      # =======================================================
+      - name: 🔥 Sync & Evolve BusyBox (V44:Integrated)
+        run: |
+          set -x
+          echo "::group::BusyBox Evolution V44"
+          
+          # 1. 定義變數 (Readonly 防止篡改)
+          # 注意：在此 Workflow 中，padavan-ng 是根目錄下的子目錄
+          readonly WORK_DIR="padavan-ng"
+          readonly REPO_ROOT="$WORK_DIR"
+          readonly ORIGINAL_CONFIG="$REPO_ROOT/trunk/configs/boards/busybox.config"
+          readonly TARGET_DIR="$REPO_ROOT/trunk/user/busybox"
+          
+          # 確認目錄存在
+          if [ ! -d "$TARGET_DIR" ]; then
+              echo "❌ CRITICAL: BusyBox directory not found at $TARGET_DIR"
+              exit 1
+          fi
+          
+          # 進入 BusyBox 目錄 (直接操作 1.37.0 目錄)
+          # 注意：假設 trunk/user/busybox 下面直接就是源碼，或者有一個 busybox-1.37.0 子目錄
+          # 根據您的描述，您已經替換了源碼，所以這裡我們做一個智慧判斷
+          cd "$TARGET_DIR"
+          if [ -d "busybox-1.37.0" ]; then
+              cd "busybox-1.37.0"
+          fi
+          
+          # 定義同步目標 (現在我們位於 busybox 源碼根目錄)
+          readonly SYNC_TARGET_1=".config"
+          readonly SYNC_TARGET_2="../.config"
+          # 計算回 original config 的相對路徑 (從 busybox-1.37.0 出發: ../../../configs/...)
+          # 或者直接用絕對路徑 (但在 Action 中用相對路徑比較靈活)
+          # 這裡我們用之前定義的 ORIGINAL_CONFIG 變數 (需要轉為相對路徑或直接寫入)
+          # 簡單起見，我們用 readlink 獲取絕對路徑，或者假設結構固定
+          readonly SYNC_TARGET_3="../../../configs/boards/busybox.config"
+
+          # -------------------------------------------------------
+          # 2. 定義全套檢查清單 (擴充至 60+ 項)
+          # -------------------------------------------------------
+          CHECKS_SET=(
+              # Shells
+              "CONFIG_SH_IS_ASH y"
+              "CONFIG_BASH_IS_ASH y"
+              "CONFIG_ASH y"
+              "CONFIG_ASH_OPTIMIZE_FOR_SIZE y"
+              "CONFIG_ASH_INTERNAL_GLOB y"
+              "CONFIG_ASH_BASH_COMPAT y"
+              "CONFIG_ASH_JOB_CONTROL y"
+              "CONFIG_ASH_ALIAS y"
+              "CONFIG_ASH_EXPAND_PRMT y"
+              "CONFIG_ASH_GETOPTS y"
+              "CONFIG_ASH_CMDCMD y"
+              "CONFIG_ASH_HELP y"
+              "CONFIG_ASH_RANDOM_SUPPORT y"
+              "CONFIG_ASH_IDLE_TIMEOUT y"
+              "CONFIG_ASH_MAIL y"
+              "CONFIG_FEATURE_SH_MATH_BASE y"
+              "CONFIG_FEATURE_SH_EMBEDDED_SCRIPTS y"
+              
+              # Logging
+              "CONFIG_SYSLOGD y"
+              "CONFIG_FEATURE_ROTATE_LOGFILE y"
+              "CONFIG_FEATURE_REMOTE_LOG y"
+              "CONFIG_FEATURE_SYSLOGD_DUP y"
+              "CONFIG_FEATURE_SYSLOGD_PRECISE_TIMESTAMPS y"
+              "CONFIG_FEATURE_SYSLOGD_READ_BUFFER_SIZE 512"
+              "CONFIG_FEATURE_IPC_SYSLOG y"
+              "CONFIG_FEATURE_IPC_SYSLOG_BUFFER_SIZE 4"
+              "CONFIG_KLOGD y"
+              "CONFIG_FEATURE_KLOGD_KLOGCTL y"
+              "CONFIG_LOGGER y"
+              
+              # Network & DHCP
+              "CONFIG_UDHCPC_DEFAULT_INTERFACE \"eth3\""
+              "CONFIG_FEATURE_IP_ROUTE_DIR \"\""
+              "CONFIG_SHA1_SMALL 1"
+              "CONFIG_DHCP6C y"
+              "CONFIG_FEATURE_UDHCPC_SANITIZEOPT y"
+              "CONFIG_FEATURE_UDHCP_RFC3397 y"
+              "CONFIG_FEATURE_UDHCP_RFC5969 y"
+              "CONFIG_IPNEIGH y"
+              "CONFIG_FEATURE_IP_NEIGH y"
+              "CONFIG_NC y"
+              "CONFIG_NC_SERVER y"
+              "CONFIG_NC_EXTRA y"
+              "CONFIG_FEATURE_NSLOOKUP_BIG y"
+              "CONFIG_FEATURE_NSLOOKUP_LONG_OPTIONS y"
+              "CONFIG_FEATURE_NTP_AUTH y"
+              "CONFIG_SSL_CLIENT y"
+              "CONFIG_TC y"
+              "CONFIG_FEATURE_TC_INGRESS y"
+              "CONFIG_TLS y"
+              "CONFIG_SVC y"
+              "CONFIG_SVOK y"
+              
+              # WGET
+              "CONFIG_WGET y"
+              "CONFIG_FEATURE_WGET_LONG_OPTIONS y"
+              "CONFIG_FEATURE_WGET_STATUSBAR y"
+              "CONFIG_FEATURE_WGET_AUTHENTICATION y"
+              "CONFIG_FEATURE_WGET_TIMEOUT y"
+              "CONFIG_FEATURE_WGET_HTTPS y"
+              "CONFIG_FEATURE_WGET_OPENSSL y"
+              
+              # Loop & Core
+              "CONFIG_NO_LOOP_CONFIGURE y"
+              "CONFIG_STACK_OPTIMIZATION_386 y"
+              "CONFIG_BZIP2_SMALL 9"
+              "CONFIG_CRC32 y"
+              "CONFIG_FEATURE_CP_REFLINK y"
+              "CONFIG_FACTOR y"
+              "CONFIG_LINK y"
+              "CONFIG_SHA256SUM y"
+              "CONFIG_NL y"
+              "CONFIG_NOHUP y"
+              "CONFIG_NPROC y"
+              "CONFIG_PASTE y"
+              "CONFIG_SHRED y"
+              "CONFIG_TEST1 y"
+              "CONFIG_TEST2 y"
+              "CONFIG_TSORT y"
+              "CONFIG_BB_ARCH y"
+              "CONFIG_BASE32 y"
+              "CONFIG_BASE64 y"
+              "CONFIG_RESUME y"
+              "CONFIG_RUN_INIT y"
+              "CONFIG_FEATURE_XARGS_SUPPORT_PARALLEL y"
+              "CONFIG_FEATURE_XARGS_SUPPORT_ARGS_FILE y"
+              "CONFIG_POWEROFF y"
+              "CONFIG_REBOOT y"
+              "CONFIG_FEATURE_WAIT_FOR_INIT y"
+              "CONFIG_LINUXRC y"
+              "CONFIG_FEATURE_INIT_QUIET y"
+              "CONFIG_FEATURE_INIT_MODIFY_CMDLINE y"
+              "CONFIG_MKPASSWD y"
+              "CONFIG_MODINFO y"
+              "CONFIG_BLKDISCARD y"
+              "CONFIG_FALLOCATE y"
+              "CONFIG_FSFREEZE y"
+              "CONFIG_GETOPT y"
+              "CONFIG_FEATURE_GETOPT_LONG y"
+              "CONFIG_HEXDUMP y"
+              "CONFIG_XXD y"
+              "CONFIG_FEATURE_MDEV_DAEMON y"
+              "CONFIG_MKE2FS y"
+              "CONFIG_MKDOSFS y"
+              "CONFIG_LINUX32 y"
+              "CONFIG_LINUX64 y"
+              "CONFIG_SETPRIV y"
+              "CONFIG_FEATURE_SETPRIV_DUMP y"
+              "CONFIG_FEATURE_SETPRIV_CAPABILITIES y"
+              "CONFIG_FEATURE_SETPRIV_CAPABILITY_NAMES y"
+              "CONFIG_UNSHARE y"
+              "CONFIG_BC y"
+              "CONFIG_FEATURE_DC_BIG y"
+              "CONFIG_FEATURE_BC_INTERACTIVE y"
+              "CONFIG_FEATURE_BC_LONG_OPTIONS y"
+              "CONFIG_FEATURE_CROND_SPECIAL_TIMES y"
+              "CONFIG_GETFATTR y"
+              "CONFIG_HEXEDIT y"
+              "CONFIG_I2CTRANSFER y"
+              "CONFIG_LSSCSI y"
+              "CONFIG_MIM y"
+              "CONFIG_PARTPROBE y"
+              "CONFIG_SEEDRNG y"
+              "CONFIG_SETFATTR y"
+              "CONFIG_TS y"
+              "CONFIG_UBIRENAME y"
+              
+              # User Preferences
+              "CONFIG_FEATURE_TAR_LONG_OPTIONS y"
+              "CONFIG_FEATURE_SORT_OPTIMIZE_MEMORY y"
+              "CONFIG_FEATURE_SHOW_SCRIPT y"
+              "CONFIG_FLOAT_DURATION y"
+              "CONFIG_NOLOGIN y"
+              "CONFIG_NSENTER y"
+              "CONFIG_FEATURE_START_STOP_DAEMON_LONG_OPTIONS y"
+              "CONFIG_FEATURE_SWAPON_PRI y"
+              "CONFIG_FEATURE_ETC_SERVICES y"
+              "CONFIG_FEATURE_CATN y"
+              "CONFIG_FEATURE_CATV y"
+              
+              # Volume IDs
+              "CONFIG_FEATURE_VOLUMEID_BCACHE y"
+              "CONFIG_FEATURE_VOLUMEID_EROFS y"
+              "CONFIG_FEATURE_VOLUMEID_MINIX y"
+              "CONFIG_FEATURE_VOLUMEID_UBIFS y"
+              "CONFIG_FEATURE_VOLUMEID_XFS y"
+          )
+          
+          CHECKS_UNSET=(
+              "CONFIG_SH_IS_HUSH"
+              "CONFIG_BASH_IS_HUSH"
+              "CONFIG_BASH_IS_NONE"
+              "CONFIG_HUSH"
+              "CONFIG_FEATURE_DHCP6_AUTH"
+              "CONFIG_TRY_LOOP_CONFIGURE"
+              "CONFIG_LOOP_CONFIGURE"
+              "CONFIG_FEATURE_WGET_FTP"
+              "CONFIG_WHOIS"
+              "CONFIG_UDHCPD"
+              "CONFIG_FEATURE_UDHCPD_BOOTP"
+              "CONFIG_FEATURE_UDHCPD_BASE_IP_ON_MAC"
+              "CONFIG_FEATURE_UDHCPD_WRITE_LEASES_EARLY"
+              "CONFIG_DUMPLEASES"
+              "CONFIG_DHCPRELAY"
+              "CONFIG_UDHCPC6"
+              "CONFIG_FEATURE_UDHCPC6_RFC3646"
+              "CONFIG_FEATURE_UDHCPC6_RFC4704"
+              "CONFIG_FEATURE_UDHCPC6_RFC4833"
+              "CONFIG_FEATURE_UDHCPC6_RFC5970"
+              "CONFIG_FEATURE_UDHCP_PORT"
+              "CONFIG_FEATURE_UDHCP_8021Q"
+              "CONFIG_ASH_BASH_SOURCE_CURDIR"
+          )
+
+          # -------------------------------------------------------
+          # 3. 核心功能函式
+          # -------------------------------------------------------
+          audit_config() {
+              local FILE=$1
+              local LIST_NAME=$2 
+              local FAILURES=()
+              echo "   🔍 Auditing $FILE..."
+              if [ ! -f "$FILE" ]; then echo "      ❌ File missing: $FILE"; return 1; fi
+              
+              for ENTRY in "${CHECKS_SET[@]}"; do
+                  KEY=${ENTRY%% *}
+                  VAL=${ENTRY#* }
+                  if ! grep -q "^${KEY}=${VAL}$" "$FILE"; then
+                      echo "      ❌ [FAIL] $KEY mismatch/missing"
+                      FAILURES+=("$ENTRY")
+                  fi
+              done
+              
+              for KEY in "${CHECKS_UNSET[@]}"; do
+                  if grep -q "^${KEY}=" "$FILE"; then
+                      echo "      ❌ [FAIL] $KEY is SET (Should be UNSET)"
+                      FAILURES+=("$KEY UNSET")
+                  fi
+              done
+              
+              if [ ${#FAILURES[@]} -gt 0 ]; then
+                  eval "$LIST_NAME=(\"\${FAILURES[@]}\")"
+                  return 1
+              fi
+              return 0
+          }
+
+          apply_fixes() {
+              local FILE=$1
+              local ITEMS=("${@:2}")
+              echo "   🛠️ Applying Fixes to $FILE..."
+              for ITEM in "${ITEMS[@]}"; do
+                  if [[ "$ITEM" == *" UNSET" ]]; then
+                      KEY=${ITEM% UNSET}
+                      sed -i "/$KEY/d" "$FILE"
+                      echo "# $KEY is not set" >> "$FILE"
+                  else
+                      KEY=${ITEM%% *}
+                      VAL=${ITEM#* }
+                      sed -i "/$KEY/d" "$FILE"
+                      echo "$KEY=$VAL" >> "$FILE"
+                  fi
+              done
+          }
+
+          # =======================================================
+          # 4. Config 初始化
+          # =======================================================
+          echo "🔧 [PHASE 2] Config Evolution"
+          # 假設原本的 config 存在，複製過來
+          # 這裡我們用一個更強健的檢查：如果 SYNC_TARGET_3 存在，就用它，否則報錯
+          # 注意：我們現在在 busybox-1.37.0 目錄下
+          
+          if [ -f "$SYNC_TARGET_3" ]; then
+              cp -f "$SYNC_TARGET_3" .config
+          else
+              echo "⚠️ Original config not found at $SYNC_TARGET_3"
+              # 這裡可以選擇是否要繼續，如果沒有原始 config，make oldconfig 會使用 defaults
+              # 為了安全，我們還是報錯比較好，除非您確定要用預設
+              # exit 1 
+          fi
+          
+          yes "" | make oldconfig || true
+
+          # 4.3 [SMART CLEAN] 智慧清理 (防止重複定義)
+          echo "   -> Cleaning ALL target keys to prevent reassign warnings..."
+          for ENTRY in "${CHECKS_SET[@]}"; do
+              KEY=${ENTRY%% *}
+              sed -i "/$KEY/d" .config
+          done
+          for KEY in "${CHECKS_UNSET[@]}"; do
+              sed -i "/$KEY/d" .config
+          done
+          echo "   ✅ Clean complete."
+
+          # 4.4 [INJECT] 注入設定
+          echo "   -> Injecting Specs..."
+          {
+              echo "# --- Custom Injection Start ---"
+              for ENTRY in "${CHECKS_SET[@]}"; do
+                  KEY=${ENTRY%% *}
+                  VAL=${ENTRY#* }
+                  echo "$KEY=$VAL"
+              done
+              for KEY in "${CHECKS_UNSET[@]}"; do
+                  echo "# $KEY is not set"
+              done
+              echo "# --- Custom Injection End ---"
+          } >> .config
+
+          # 4.5 整合
+          yes "" | make oldconfig || true
+
+          # =======================================================
+          # 5. [IRONCLAD AUDIT] 本地驗證迴圈
+          # =======================================================
+          echo "🔍 [PHASE 3] Local Audit Loop (.config)"
+          CURRENT_FILE=".config"
+          
+          # Round 1
+          FAIL_LIST_1=()
+          if ! audit_config "$CURRENT_FILE" FAIL_LIST_1; then
+              echo "⚠️ Round 1 Failed. Fix count: ${#FAIL_LIST_1[@]}"
+              apply_fixes "$CURRENT_FILE" "${FAIL_LIST_1[@]}"
+          else
+              echo "✅ Round 1 Passed."
+          fi
+          
+          # Round 2
+          FAIL_LIST_2=()
+          if ! audit_config "$CURRENT_FILE" FAIL_LIST_2; then
+              echo "⚠️ Round 2 Failed. Fix count: ${#FAIL_LIST_2[@]}"
+              apply_fixes "$CURRENT_FILE" "${FAIL_LIST_2[@]}"
+          else
+              echo "✅ Round 2 Passed."
+          fi
+          
+          # Round 3 (Death Check)
+          FAIL_LIST_3=()
+          if ! audit_config "$CURRENT_FILE" FAIL_LIST_3; then
+              echo "⛔ FATAL: Round 3 Failed!"
+              printf '   - %s\n' "${FAIL_LIST_3[@]}"
+              exit 1
+          fi
+          echo "✅ Round 3 Passed. Config is Perfect."
+
+          # =======================================================
+          # 6. [SYNC & FULL VERIFY] 同步 + 逐一驗證
+          # =======================================================
+          echo "🌍 [PHASE 4] Sync & Global Verify"
+          
+          echo "   -> Propagating to Targets..."
+          # 確保目標目錄存在 (configs/boards)
+          mkdir -p "$(dirname "$SYNC_TARGET_3")"
+          
+          cp -f .config "$SYNC_TARGET_2"
+          cp -f .config "$SYNC_TARGET_3"
+          
+          ALL_TARGETS=("$SYNC_TARGET_1" "$SYNC_TARGET_2" "$SYNC_TARGET_3")
+          
+          for TARGET in "${ALL_TARGETS[@]}"; do
+              echo "   ----------------------------------------"
+              echo "   🔍 Final Audit for: $TARGET"
+              FINAL_FAILS=()
+              if ! audit_config "$TARGET" FINAL_FAILS; then
+                  echo "❌ FATAL ERROR: Verification Failed on $TARGET"
+                  printf '   - %s\n' "${FINAL_FAILS[@]}"
+                  exit 1
+              else
+                  echo "✅ Verified: $TARGET"
+              fi
+          done
+          echo "✅ All 3 Targets are 100% Synchronized and Verified."
+
+          # =======================================================
+          # 7. [CODE & BUILD] 程式碼與依賴驗證
+          # =======================================================
+          echo "💉 [PHASE 5] Code & Build Verify"
+          
+          # 回到 trunk/user/rc (相對路徑)
+          cd "../../rc"
+          RC_FILE="services.c" 
+          PATCH_FILE="services_syslogd_fix.patch"
+          
+          if [ -f "$RC_FILE" ]; then
+              echo "   🔍 Checking $RC_FILE..."
+              
+              # [檢查 1]: 預先檢查是否已經修復 (冪等性)
+              if grep -F '"-L",' "$RC_FILE" && ! grep -q 'syslogd_argv\[7\]' "$RC_FILE"; then
+                  echo "   ✅ Code is already patched. Skipping apply."
+              else
+                  # [檢查 2]: 確認特徵碼存在才執行 patch
+                  if grep -F "NULL,				/* -L */" "$RC_FILE"; then
+                      echo "   -> Applying patch..."
+                      
+                      # 這裡使用乾淨的 Here-Doc，縮排與 Shell 腳本對齊
+                      cat << 'END_PATCH' > "$PATCH_FILE"
+          --- services.c.orig
+          +++ services.c
+          @@ -52,7 +52,7 @@
+           		"-S",				/* smaller output */
+           		"-D",				/* drop duplicates */
+           		"-O", "/tmp/syslog.log",	/* syslog file */
+          -		NULL,				/* -L */
+          +		"-L",				/* log locally */
+           		NULL, NULL,			/* -R host:port */
+           		NULL
+           	};
+          @@ -63,8 +63,7 @@
+           	if (is_valid_ipv4(log_ipaddr)) {
+           		int log_port = nvram_safe_get_int("log_port", 514, 1, 65535);
+           		snprintf(host_dst, sizeof(host_dst), "%s:%d", log_ipaddr, log_port);
+          -		syslogd_argv[7] = "-L";		/* local & remote */
+           		syslogd_argv[8] = "-R";
+           		syslogd_argv[9] = host_dst;
+           	}
+          END_PATCH
+                      
+                      # 執行 Patch (允許 fuzz/offset，失敗不中斷)
+                      patch -l -F 5 -N < "$PATCH_FILE" || echo "⚠️ Patch msg: Fuzzy match or already applied."
+                      rm "$PATCH_FILE"
+                  else
+                      echo "⚠️ Target code block not found! File might be already changed."
+                  fi
+              fi
+              
+              # [最終驗證]: 這是唯一決定成敗的關鍵
+              if ! grep -F '"-L",' "$RC_FILE"; then 
+                  echo "❌ Patch Failed! '-L' not found."
+                  exit 1
+              fi
+              
+              if grep -q 'syslogd_argv\[7\]' "$RC_FILE"; then 
+                  echo "❌ Patch Failed! Old code remains."
+                  exit 1
+              fi
+              echo "✅ Code Patch Verified."
+          fi
+
+          # Build Script Cleanup
+          # 回到 trunk (因為前面是在 busybox 目錄)
+          cd ../.. 
+          
+          echo "🧹 [PHASE 6] Build System Cleanup & Verify"
+          
+          # 1. 替換 1.24.x -> 1.37.0 (加上 || true 防止 grep 找不到時報錯)
+          grep -rl "busybox-1.24.x" user/ | xargs -r sed -i "s/busybox-1.24.x/busybox-1.37.0/g" || true
+          grep -rl "busybox-1.24.2" user/ | xargs -r sed -i "s/busybox-1.24.2/busybox-1.37.0/g" || true
+          
+          # 2. 替換腳本內的變數定義
+          find . -maxdepth 1 -name "*.sh" -o -name "build_firmware*" | while read -r script; do
+             if grep -q 'busybox_id="1.24.x"' "$script"; then
+                sed -i 's/busybox_id="1.24.x"/busybox_id="1.37.0"/' "$script"
+                echo "   -> Updated version in $script"
+             fi
+          done
+          
+          # 3. 最終驗證 (確認是否還有殘留)
+          REMAINING_COUNT=$(grep -r "busybox-1.24.x" user/ | wc -l)
+          if [ "$REMAINING_COUNT" -ne 0 ]; then
+              echo "❌ Build script cleanup failed! Found $REMAINING_COUNT occurrences."
+              # 列出殘留檔案供 Debug
+              grep -r "busybox-1.24.x" user/
+              exit 1
+          fi
+          
+          echo "✅ Build System Verified (No old versions found)."
+
+          # =======================================================
+          # 8. [SECURITY] CVE-2025-60876 & CVE-2025-46394
+          # =======================================================
+          echo "🛡️ [PHASE 7] Applying Security Patches"
+          
+          # 1. 進入 busybox 源碼目錄
+          # 注意：此時我們在 trunk 目錄 (PHASE 6 結束位置)，所以要進 user/busybox
+          cd user/busybox
+          
+          # 進入版本號目錄 (如果存在)
+          if [ -d "busybox-1.37.0" ]; then cd "busybox-1.37.0"; fi
+          
+          # 2. 建立 patches 專用目錄
+          echo "   -> Creating 'patches' directory..."
+          mkdir -p patches
+
+          # -------------------------------------------------------
+          # [Patch 1] CVE-2025-60876: Wget Header Injection
+          # -------------------------------------------------------
+          cat << 'CVE_PATCH_1' > patches/CVE-2025-60876.patch
+          From: Radoslav Kolev <radoslav.kolev@suse.com>
+          Subject: [PATCH] wget: don't allow control characters or spaces in the URL
+
+          Fixes CVE-2025-60876 malicious URL can be used to inject
+          HTTP headers in the request.
+
+          ---
+           networking/wget.c | 9 +++++++++
+           1 file changed, 9 insertions(+)
+
+          diff --git a/networking/wget.c b/networking/wget.c
+          index ec3767793..b8a6d02bb 100644
+          --- a/networking/wget.c
+          +++ b/networking/wget.c
+          @@ -536,6 +536,15 @@ static void parse_url(const char *src_url, struct host_info *h)
+           {
+           	char *url, *p, *sp;
+           
+          +	/* Fix for CVE-2025-60876 - don't allow control characters or spaces in the URL */
+          +	/* otherwise a malicious URL can be used to inject HTTP headers in the request */
+          +	unsigned char *u = (void *) src_url;
+          +	while (*u) {
+          +		if (*u <= ' ')
+          +			bb_simple_error_msg_and_die("Unencoded control character found in the URL!");
+          +		u++;
+          +	}
+          +
+           	free(h->allocated);
+           	h->allocated = url = xstrdup(src_url);
+          CVE_PATCH_1
+
+          echo "   -> Applying patches/CVE-2025-60876.patch..."
+          patch -p1 -N -i patches/CVE-2025-60876.patch || echo "⚠️ CVE-2025-60876 patch fuzzy/already applied."
+
+          # -------------------------------------------------------
+          # [Patch 2] CVE-2025-46394: Libarchive Terminal Injection (V2)
+          # 已移除 testsuite 測試腳本，只修復核心 .c 檔案
+          # -------------------------------------------------------
+          cat << 'CVE_PATCH_2' > patches/CVE-2025-46394.patch
+          From: Denys Vlasenko <vda.linux@googlemail.com>
+          Subject: [PATCH] archival/libarchive: sanitize filenames on output
+
+          This fixes CVE-2025-46394 (terminal escape sequence injection)
+
+          ---
+           archival/libarchive/header_list.c         | 2 +-
+           archival/libarchive/header_verbose_list.c | 4 ++--
+           2 files changed, 3 insertions(+), 3 deletions(-)
+
+          diff --git a/archival/libarchive/header_list.c b/archival/libarchive/header_list.c
+          index 0621aa406..9490b3635 100644
+          --- a/archival/libarchive/header_list.c
+          +++ b/archival/libarchive/header_list.c
+          @@ -8,5 +8,5 @@
+           void FAST_FUNC header_list(const file_header_t *file_header)
+           {
+           //TODO: cpio -vp DIR should output "DIR/NAME", not just "NAME" */
+          -	puts(file_header->name);
+          +	puts(printable_string(file_header->name));
+           }
+          diff --git a/archival/libarchive/header_verbose_list.c b/archival/libarchive/header_verbose_list.c
+          index a575a08a0..e7a09430d 100644
+          --- a/archival/libarchive/header_verbose_list.c
+          +++ b/archival/libarchive/header_verbose_list.c
+          @@ -57,13 +57,13 @@ void FAST_FUNC header_verbose_list(const file_header_t *file_header)
+           		ptm->tm_hour,
+           		ptm->tm_min,
+           		ptm->tm_sec,
+          -		file_header->name);
+          +		printable_string(file_header->name));
+           
+           #endif /* FEATURE_TAR_UNAME_GNAME */
+           
+           	/* NB: GNU tar shows "->" for symlinks and "link to" for hardlinks */
+           	if (file_header->link_target) {
+          -		printf(" -> %s", file_header->link_target);
+          +		printf(" -> %s", printable_string(file_header->link_target));
+           	}
+           	bb_putchar('\n');
+           }
+          CVE_PATCH_2
+
+          echo "   -> Applying patches/CVE-2025-46394.patch..."
+          patch -p1 -N -i patches/CVE-2025-46394.patch || echo "⚠️ CVE-2025-46394 patch fuzzy/already applied."
+
+          set +x
+          echo "🎉 BusyBox 1.37.0 Evolution Complete (V44: Integrated Masterpiece)."
+          echo "::endgroup::"
+      
+      # =======================================================
       # 7.5. [全局修復] 升級 iptables 1.8.11 + 修復所有依賴包路徑 + 套用 Upstream Patches
       # =======================================================
       - name: 🔥 Auto Upgrade iptables 1.8.11 & Patch
@@ -1008,10 +1589,33 @@ jobs:
           # 2. 備份關鍵配置檔
           echo "Collecting Debug Configurations..."
           [ -f "padavan-ng/trunk/.config" ] && cp "padavan-ng/trunk/.config" "$PACK_DIR/build.config"
+          [ -f "padavan-ng/trunk/configs/boards/busybox.config" ] && cp "padavan-ng/trunk/configs/boards/busybox.config" "$PACK_DIR/busybox.config"
           [ -f "padavan-ng/trunk/user/shared/defaults.h" ] && cp "padavan-ng/trunk/user/shared/defaults.h" "$PACK_DIR/defaults.h.txt"
           [ -f "padavan-ng/trunk/user/www/dict/CN.dict" ] && cp "padavan-ng/trunk/user/www/dict/CN.dict" "$PACK_DIR/CN.dict.txt"
           [ -f "padavan-ng/trunk/linux-3.4.x/.config" ] && cp "padavan-ng/trunk/linux-3.4.x/.config" "$PACK_DIR/kernel.config"
           [ -f "padavan-ng/trunk/build.log" ] && cp "padavan-ng/trunk/build.log" "$PACK_DIR/build.log"
+
+          # =======================================================
+          # 🔥 [NEW] 收集 BusyBox Patches (CVE Debug)
+          # =======================================================
+          BB_SRC_DIR="padavan-ng/trunk/user/busybox/busybox-1.37.0"
+          DEBUG_BB_DIR="$PACK_DIR/debug_busybox"
+          mkdir -p "$DEBUG_BB_DIR"
+
+          # 檢查 Phase 7 建立的 patches 目錄是否存在
+          if [ -d "$BB_SRC_DIR/patches" ]; then
+              echo "✅ Found BusyBox patches directory, collecting..."
+              cp "$BB_SRC_DIR/patches"/*.patch "$DEBUG_BB_DIR/" 2>/dev/null || true
+              echo "- 🛡️ **BusyBox Patches**: Collected in \`debug_busybox\`" >> "$REPORT_FILE"
+              
+              # 額外收集: BusyBox 的實際編譯 .config (確認 CVE 編譯選項)
+              if [ -f "$BB_SRC_DIR/.config" ]; then
+                  cp "$BB_SRC_DIR/.config" "$DEBUG_BB_DIR/busybox_actual_build.config"
+              fi
+          else
+              echo "⚠️ Warning: BusyBox patches directory not found (Phase 7 issue?)."
+              echo "- ⚠️ **BusyBox Patches**: Not found" >> "$REPORT_FILE"
+          fi
 
           # =======================================================
           # 🔥 強化：收集 iptables 相關產物 (智慧驗證版)

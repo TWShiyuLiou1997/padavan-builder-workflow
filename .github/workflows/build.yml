@@ -1175,6 +1175,16 @@ jobs:
                       PROCESS_SUCCESS=true
                       break # 成功跳出
                   else
+                      # 🟢 [新增] 唯一修改處：Patch 失敗時，立刻檢查檔案是否完好
+                      # 如果檔案校驗通過 (Hash 正確)，代表是「重複套用」，直接視為成功並跳出！
+                      if verify_patch_integrity "$PATCH_FILENAME" "$TARGET_COMMIT_ID" "$TARGET_NORM_SUBJECT" >/dev/null 2>&1; then
+                          echo "⚠️ Patch failed but file integrity is VALID."
+                          echo "   -> Assuming patch was already applied or reversed. Skipping..."
+                          echo "[$DATE] #$COUNT PATCH_SKIP : $RAW_NAME (Integrity OK)" >> "$LOG_FILE"
+                          break
+                      fi
+                      # 🟢 [結束新增] 若校驗失敗，才會執行下面原本的「刪除重抓」邏輯
+
                       # 🔥 [V12 修正] 智慧判斷邏輯
                       if [ "$NEED_DOWNLOAD" = false ]; then
                           # 快取失效 -> 刪除快取 -> 重跑迴圈

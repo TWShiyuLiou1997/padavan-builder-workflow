@@ -289,7 +289,7 @@ jobs:
           readonly SYNC_TARGET_3="../../../configs/boards/busybox.config"
 
           # -------------------------------------------------------
-          # 2. 定義全套檢查清單 (擴充至 60+ 項)
+          # 2. 定義全套檢查清單 (MIPS Router Optimized / Diff Mode)
           # -------------------------------------------------------
           CHECKS_SET=(
               # Shells
@@ -341,8 +341,9 @@ jobs:
               "CONFIG_FEATURE_NSLOOKUP_LONG_OPTIONS y"
               "CONFIG_FEATURE_NTP_AUTH y"
               "CONFIG_SSL_CLIENT y"
-              "CONFIG_TC y"
-              "CONFIG_FEATURE_TC_INGRESS y"
+              # [移除] 移至 UNSET 以提升資安 (不開啟流量控制監聽)
+              # "CONFIG_TC y"
+              # "CONFIG_FEATURE_TC_INGRESS y"
               "CONFIG_TLS y"
               "CONFIG_SVC y"
               "CONFIG_SVOK y"
@@ -358,11 +359,13 @@ jobs:
               
               # Loop & Core
               "CONFIG_NO_LOOP_CONFIGURE y"
-              "CONFIG_STACK_OPTIMIZATION_386 y"
+              # [移除] MIPS 架構不支援 x86 優化
+              # "CONFIG_STACK_OPTIMIZATION_386 y"
               "CONFIG_BZIP2_SMALL 9"
               "CONFIG_CRC32 y"
               "CONFIG_FEATURE_CP_REFLINK y"
-              "CONFIG_FACTOR y"
+              # [移除] 因數分解，路由器用不到
+              # "CONFIG_FACTOR y"
               "CONFIG_LINK y"
               "CONFIG_SHA256SUM y"
               "CONFIG_NL y"
@@ -376,7 +379,8 @@ jobs:
               "CONFIG_BB_ARCH y"
               "CONFIG_BASE32 y"
               "CONFIG_BASE64 y"
-              "CONFIG_RESUME y"
+              # [移除] 路由器不支援休眠喚醒
+              # "CONFIG_RESUME y"
               "CONFIG_RUN_INIT y"
               "CONFIG_FEATURE_XARGS_SUPPORT_PARALLEL y"
               "CONFIG_FEATURE_XARGS_SUPPORT_ARGS_FILE y"
@@ -388,9 +392,11 @@ jobs:
               "CONFIG_FEATURE_INIT_MODIFY_CMDLINE y"
               "CONFIG_MKPASSWD y"
               "CONFIG_MODINFO y"
-              "CONFIG_BLKDISCARD y"
-              "CONFIG_FALLOCATE y"
-              "CONFIG_FSFREEZE y"
+              # [移除] Flash 不支援 TRIM
+              # "CONFIG_BLKDISCARD y"
+              # [移除] 路由器檔案系統通常不需預分配
+              # "CONFIG_FALLOCATE y"
+              # "CONFIG_FSFREEZE y"
               "CONFIG_GETOPT y"
               "CONFIG_FEATURE_GETOPT_LONG y"
               "CONFIG_HEXDUMP y"
@@ -398,13 +404,15 @@ jobs:
               "CONFIG_FEATURE_MDEV_DAEMON y"
               "CONFIG_MKE2FS y"
               "CONFIG_MKDOSFS y"
-              "CONFIG_LINUX32 y"
-              "CONFIG_LINUX64 y"
-              "CONFIG_SETPRIV y"
-              "CONFIG_FEATURE_SETPRIV_DUMP y"
-              "CONFIG_FEATURE_SETPRIV_CAPABILITIES y"
-              "CONFIG_FEATURE_SETPRIV_CAPABILITY_NAMES y"
-              "CONFIG_UNSHARE y"
+              # [移除] 架構錯誤，MIPS 不需要這些
+              # "CONFIG_LINUX32 y"
+              # "CONFIG_LINUX64 y"
+              # [移除] 容器相關，MIPS 效能差且少用
+              # "CONFIG_SETPRIV y"
+              # "CONFIG_FEATURE_SETPRIV_DUMP y"
+              # "CONFIG_FEATURE_SETPRIV_CAPABILITIES y"
+              # "CONFIG_FEATURE_SETPRIV_CAPABILITY_NAMES y"
+              # "CONFIG_UNSHARE y"
               "CONFIG_BC y"
               "CONFIG_FEATURE_DC_BIG y"
               "CONFIG_FEATURE_BC_INTERACTIVE y"
@@ -412,7 +420,8 @@ jobs:
               "CONFIG_FEATURE_CROND_SPECIAL_TIMES y"
               "CONFIG_GETFATTR y"
               "CONFIG_HEXEDIT y"
-              "CONFIG_I2CTRANSFER y"
+              # [移除] 無 I2C 硬體支援
+              # "CONFIG_I2CTRANSFER y"
               "CONFIG_LSSCSI y"
               "CONFIG_MIM y"
               "CONFIG_PARTPROBE y"
@@ -427,7 +436,8 @@ jobs:
               "CONFIG_FEATURE_SHOW_SCRIPT y"
               "CONFIG_FLOAT_DURATION y"
               "CONFIG_NOLOGIN y"
-              "CONFIG_NSENTER y"
+              # [移除] 僅供除錯，極少使用
+              # "CONFIG_NSENTER y"
               "CONFIG_FEATURE_START_STOP_DAEMON_LONG_OPTIONS y"
               "CONFIG_FEATURE_SWAPON_PRI y"
               "CONFIG_FEATURE_ETC_SERVICES y"
@@ -435,9 +445,10 @@ jobs:
               "CONFIG_FEATURE_CATV y"
               
               # Volume IDs
-              "CONFIG_FEATURE_VOLUMEID_BCACHE y"
-              "CONFIG_FEATURE_VOLUMEID_EROFS y"
-              "CONFIG_FEATURE_VOLUMEID_MINIX y"
+              # [移除] 路由器極少用到這些檔案系統，節省空間
+              # "CONFIG_FEATURE_VOLUMEID_BCACHE y"
+              # "CONFIG_FEATURE_VOLUMEID_EROFS y"
+              # "CONFIG_FEATURE_VOLUMEID_MINIX y"
               "CONFIG_FEATURE_VOLUMEID_UBIFS y"
               "CONFIG_FEATURE_VOLUMEID_XFS y"
           )
@@ -466,6 +477,28 @@ jobs:
               "CONFIG_FEATURE_UDHCP_PORT"
               "CONFIG_FEATURE_UDHCP_8021Q"
               "CONFIG_ASH_BASH_SOURCE_CURDIR"
+              
+              # --- [新增] 安全性優化 (強制關閉) ---
+              "CONFIG_TC"
+              "CONFIG_FEATURE_TC_INGRESS"
+              "CONFIG_TCPSVD"
+              "CONFIG_UDPSVD"
+              
+              # --- [新增] 架構與垃圾清理 (強制關閉) ---
+              "CONFIG_STACK_OPTIMIZATION_386"
+              "CONFIG_RESUME"
+              "CONFIG_BLKDISCARD"
+              "CONFIG_LINUX32"
+              "CONFIG_LINUX64"
+              "CONFIG_SETPRIV"
+              "CONFIG_UNSHARE"
+              "CONFIG_NSENTER"
+              "CONFIG_I2CTRANSFER"
+              "CONFIG_FALLOCATE"
+              "CONFIG_FSFREEZE"
+              "CONFIG_FEATURE_VOLUMEID_BCACHE"
+              "CONFIG_FEATURE_VOLUMEID_EROFS"
+              "CONFIG_FEATURE_VOLUMEID_MINIX"
           )
 
           # -------------------------------------------------------

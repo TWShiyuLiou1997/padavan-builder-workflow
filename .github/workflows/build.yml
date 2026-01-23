@@ -332,8 +332,9 @@ jobs:
               "CONFIG_FEATURE_UDHCPC_SANITIZEOPT y"
               "CONFIG_FEATURE_UDHCP_RFC3397 y"
               "CONFIG_FEATURE_UDHCP_RFC5969 y"
-              "CONFIG_IPNEIGH y"
-              "CONFIG_FEATURE_IP_NEIGH y"
+              # [移除] 移至 UNSET 以避免衝突/iproute2-5.12.0/ip
+              # "CONFIG_IPNEIGH y"
+              # "CONFIG_FEATURE_IP_NEIGH y"
               "CONFIG_NC y"
               "CONFIG_NC_SERVER y"
               "CONFIG_NC_EXTRA y"
@@ -341,7 +342,7 @@ jobs:
               "CONFIG_FEATURE_NSLOOKUP_LONG_OPTIONS y"
               "CONFIG_FEATURE_NTP_AUTH y"
               "CONFIG_SSL_CLIENT y"
-              # [移除] 移至 UNSET 以提升資安 (不開啟流量控制監聽)
+              # [移除] 移至 UNSET 以避免衝突/iproute2-5.12.0/tc
               # "CONFIG_TC y"
               # "CONFIG_FEATURE_TC_INGRESS y"
               "CONFIG_TLS y"
@@ -478,7 +479,10 @@ jobs:
               "CONFIG_FEATURE_UDHCP_8021Q"
               "CONFIG_ASH_BASH_SOURCE_CURDIR"
               
-              # --- [新增] 安全性優化 (強制關閉) ---
+              # --- [新增] 避免衝突/iproute2-5.12.0/ip & /iproute2-5.12.0/tc & 強化資安 (強制關閉) ---
+              "CONFIG_IP"
+              "CONFIG_IPNEIGH" 
+              "CONFIG_FEATURE_IP_NEIGH"
               "CONFIG_TC"
               "CONFIG_FEATURE_TC_INGRESS"
               "CONFIG_TCPSVD"

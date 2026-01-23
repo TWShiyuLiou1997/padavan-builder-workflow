@@ -332,6 +332,13 @@ jobs:
               "CONFIG_FEATURE_UDHCPC_SANITIZEOPT y"
               "CONFIG_FEATURE_UDHCP_RFC3397 y"
               "CONFIG_FEATURE_UDHCP_RFC5969 y"
+              # [新增] NTP 時間伺服器 (增強內網對時)
+              "CONFIG_NTPD y"
+              "CONFIG_FEATURE_NTPD_SERVER y"
+              # [新增] IPCALC 進階計算 (確保所有腳本 100% 相容)
+              "CONFIG_IPCALC y"
+              "CONFIG_FEATURE_IPCALC_LONG_OPTIONS y"
+              "CONFIG_FEATURE_IPCALC_FANCY y"
               # [移除] 移至 UNSET 以避免衝突/iproute2-5.12.0/ip
               # "CONFIG_IPNEIGH y"
               # "CONFIG_FEATURE_IP_NEIGH y"
@@ -480,7 +487,8 @@ jobs:
               "CONFIG_ASH_BASH_SOURCE_CURDIR"
               
               # --- [新增] 避免衝突/iproute2-5.12.0/ip & /iproute2-5.12.0/tc & 強化資安 (強制關閉) ---
-              
+              # --- [新增] 避免衝突→<確保：「CONFIG_FEATURE_NTPD_CONF is not set」>Padavan 的系統架構中，ntpd 是由 rc 程式透過指令列參數（Command Line Arguments）直接啟動的（例如 ntpd -n -l -p ...）。它不會去讀取 /etc/ntp.conf。如果您開啟了這個選項，BusyBox 反而會因為找不到設定檔而報錯，或者忽略啟動參數。所以必須關閉（UNSET）。
+              "CONFIG_FEATURE_NTPD_CONF"
               # IP 主程式與功能 (全殺，因為有 iproute2)
               "CONFIG_IP"
               "CONFIG_IPADDR"

@@ -480,11 +480,35 @@ jobs:
               "CONFIG_ASH_BASH_SOURCE_CURDIR"
               
               # --- [新增] 避免衝突/iproute2-5.12.0/ip & /iproute2-5.12.0/tc & 強化資安 (強制關閉) ---
+              
+              # IP 主程式與功能 (全殺，因為有 iproute2)
               "CONFIG_IP"
-              "CONFIG_IPNEIGH" 
+              "CONFIG_IPADDR"
+              "CONFIG_IPLINK"
+              "CONFIG_IPROUTE"
+              "CONFIG_IPTUNNEL"
+              "CONFIG_IPRULE"
+              "CONFIG_IPNEIGH"
+              
+              # IP 詳細功能設定 (全殺)
+              "CONFIG_FEATURE_IP_ADDRESS"
+              "CONFIG_FEATURE_IP_LINK"
+              
+              # [💀 導致編譯失敗 Error 1 的兇手]
+              "CONFIG_FEATURE_IP_LINK_CAN"
+              
+              # IP 其他功能與協定
+              "CONFIG_FEATURE_IP_ROUTE"
+              "CONFIG_FEATURE_IP_TUNNEL"
+              "CONFIG_FEATURE_IP_RULE"
               "CONFIG_FEATURE_IP_NEIGH"
+              "CONFIG_FEATURE_IP_RARE_PROTOCOLS"
+              
+              # TC 流量控制 (全殺，因為有 iproute2)
               "CONFIG_TC"
               "CONFIG_FEATURE_TC_INGRESS"
+              
+              # 舊式服務與資安風險 (建議關閉)
               "CONFIG_TCPSVD"
               "CONFIG_UDPSVD"
               
